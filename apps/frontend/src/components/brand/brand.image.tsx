@@ -8,7 +8,7 @@ import { useToaster } from '@gitroom/react/toaster/toaster';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 
 const field =
-  'bg-input h-[42px] px-[16px] outline-none border-fifth border rounded-[4px] text-inputText placeholder-inputText w-full';
+  'bg-newBgColorInner h-[42px] px-[16px] outline-none border-newTableBorder border rounded-[8px] text-textColor placeholder-textColor w-full';
 
 type Photo = {
   id: string;

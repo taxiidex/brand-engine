@@ -42,6 +42,20 @@ const DEFAULTS = {
   ctaUrl: '',
 };
 
+// white or near-black, whichever reads better on the given colour
+const readableOn = (hex: string) => {
+  const n = parseInt((hex || '#000000').slice(1), 16);
+  const channel = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const luminance =
+    0.2126 * channel((n >> 16) & 255) +
+    0.7152 * channel((n >> 8) & 255) +
+    0.0722 * channel(n & 255);
+  return luminance > 0.4 ? '#111111' : '#FFFFFF';
+};
+
 const toList = (text: string) =>
   text
     .split(/[\n,]/)
@@ -206,8 +220,19 @@ export const BrandSettings: FC = () => {
   const logo = form.watch('logoUrl');
   const cta = form.watch('ctaText');
 
+  // The Settings page already wraps every tab in its own <form>, and a form
+  // inside a form is invalid HTML (the browser then submits the page instead of
+  // calling save). So there is no form element here, Save is a plain button, and
+  // Enter in a text box must not trigger the outer profile form either.
   return (
-    <div className="flex flex-col">
+    <div
+      className="flex flex-col"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+          e.preventDefault();
+        }
+      }}
+    >
       <h3 className="text-[20px]">{t('brand', 'Brand')}</h3>
       <div className="text-customColor18 mt-[4px]">
         {t(
@@ -225,7 +250,7 @@ export const BrandSettings: FC = () => {
             value={website}
             onChange={(e) => setWebsite(e.target.value)}
             placeholder="https://yourbusiness.com"
-            className="bg-input h-[42px] px-[16px] outline-none border-fifth border rounded-[4px] text-inputText placeholder-inputText flex-1"
+            className="bg-newBgColorInner h-[42px] px-[16px] outline-none border-newTableBorder border rounded-[8px] text-textColor placeholder-textColor flex-1"
           />
           <Button onClick={analyze} loading={analyzing} disabled={analyzing}>
             {t('brand_read_website', 'Read my website')}
@@ -234,7 +259,7 @@ export const BrandSettings: FC = () => {
       </div>
 
       <FormProvider {...form}>
-        <form onSubmit={form.handleSubmit(save)}>
+        <div>
           <div className="bg-sixth border-fifth border rounded-[4px] p-[24px] flex flex-col gap-[4px]">
             <Input
               label="Business name"
@@ -255,6 +280,7 @@ export const BrandSettings: FC = () => {
             <Textarea
               label="Short description"
               translationKey="label_brand_description"
+              className="!text-textColor"
               {...form.register('description')}
             />
             <Select
@@ -277,11 +303,13 @@ export const BrandSettings: FC = () => {
             <Textarea
               label="Topics to post about (one per line)"
               translationKey="label_brand_topics"
+              className="!text-textColor"
               {...form.register('topics')}
             />
             <Textarea
               label="SEO keywords (one per line)"
               translationKey="label_brand_keywords"
+              className="!text-textColor"
               {...form.register('keywords')}
             />
             <Input
@@ -337,7 +365,7 @@ export const BrandSettings: FC = () => {
               className="rounded-[8px] p-[24px] flex flex-col gap-[12px] w-[320px] max-w-full"
               style={{
                 background: primary,
-                color: '#FFFFFF',
+                color: readableOn(primary),
                 fontFamily: `${font}, sans-serif`,
               }}
             >
@@ -364,7 +392,7 @@ export const BrandSettings: FC = () => {
               {!!cta && (
                 <div
                   className="self-start rounded-[4px] px-[12px] py-[6px] text-[13px] font-bold"
-                  style={{ background: accent, color: '#FFFFFF' }}
+                  style={{ background: accent, color: readableOn(accent) }}
                 >
                   {cta}
                 </div>
@@ -373,7 +401,7 @@ export const BrandSettings: FC = () => {
 
             <div className="mt-[16px]">
               <Button
-                type="submit"
+                onClick={form.handleSubmit(save)}
                 loading={form.formState.isSubmitting}
                 disabled={form.formState.isSubmitting}
               >
@@ -381,7 +409,7 @@ export const BrandSettings: FC = () => {
               </Button>
             </div>
           </div>
-        </form>
+        </div>
       </FormProvider>
       {!!data?.id && <BrandImageStudio niche={data.niche || ''} />}
     </div>
