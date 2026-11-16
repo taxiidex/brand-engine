@@ -139,6 +139,57 @@ export const CreatePost: FC = () => {
   const update = <K extends keyof Generated>(key: K, value: Generated[K]) =>
     setPost((p) => (p ? { ...p, [key]: value } : p));
 
+  // The image is made after the text, so the client can read the text while
+  // a photo is found and the image is drawn
+  const makeImage = useCallback(
+    async (text: Generated, imageSize: string) => {
+      setUpdatingImage(true);
+      try {
+        const res = await fetch('/brand/image', {
+          method: 'POST',
+          body: JSON.stringify({
+            hook: text.headline || brand?.businessName || ' ',
+            subtext: text.subtext || undefined,
+            template: text.style,
+            size: imageSize,
+            photoQuery: text.photoQuery || undefined,
+          }),
+        });
+        if (!res.ok) {
+          toaster.show(
+            await errorMessage(res, 'We could not make the image.'),
+            'warning'
+          );
+          return;
+        }
+        const data = await res.json();
+        setPost((p) =>
+          p
+            ? {
+                ...p,
+                style: data.template,
+                image: {
+                  preview: data.preview,
+                  size: imageSize,
+                  photoUrl: data.photoUrl,
+                  photoCredit: data.photoCredit,
+                },
+              }
+            : p
+        );
+        if (text.style === 'photo-hook' && data.template !== 'photo-hook') {
+          toaster.show(
+            'We could not get a matching photo this time, so we made a brand card. Try "Change the photo".',
+            'warning'
+          );
+        }
+      } finally {
+        setUpdatingImage(false);
+      }
+    },
+    [brand]
+  );
+
   const generate = useCallback(async () => {
     setGenerating(true);
     setPublished(null);
@@ -151,6 +202,7 @@ export const CreatePost: FC = () => {
           style,
           size,
           channels: selectedChannels.map((c) => c.identifier),
+          skipImage: true,
         }),
       });
       if (!res.ok) {
@@ -161,18 +213,15 @@ export const CreatePost: FC = () => {
         return;
       }
       const data: Generated = await res.json();
-      setPost(data);
+      setPost({ ...data, image: null });
       setPhotoQuery(data.photoQuery);
-      if (style === 'photo-hook' && data.style !== 'photo-hook') {
-        toaster.show(
-          'We could not find a matching photo, so we made a brand card instead.',
-          'warning'
-        );
+      if (style !== 'text') {
+        makeImage(data, size);
       }
     } finally {
       setGenerating(false);
     }
-  }, [ownTopic, topic, style, size, selectedChannels]);
+  }, [ownTopic, topic, style, size, selectedChannels, makeImage]);
 
   const rerender = useCallback(
     async (photoUrl?: string | null) => {
@@ -203,10 +252,12 @@ export const CreatePost: FC = () => {
           p && p.image
             ? {
                 ...p,
+                style: data.template,
                 image: {
                   ...p.image,
                   preview: data.preview,
-                  photoUrl: photoUrl ?? p.image.photoUrl,
+                  photoUrl: data.photoUrl ?? p.image.photoUrl,
+                  photoCredit: data.photoCredit ?? p.image.photoCredit,
                 },
               }
             : p
@@ -424,11 +475,37 @@ export const CreatePost: FC = () => {
             <div
               className={clsx(
                 'grid gap-[24px]',
-                post.image
+                post.style !== 'text'
                   ? 'grid-cols-[minmax(0,420px),1fr] tablet:grid-cols-1'
                   : 'grid-cols-1'
               )}
             >
+              {post.style !== 'text' && !post.image && (
+                <div className="aspect-[4/5] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
+                  {updatingImage ? (
+                    <>
+                      <div className="text-[15px] font-[600] text-textColor">
+                        Making your image...
+                      </div>
+                      <div className="text-[13px]">
+                        Finding a photo and putting your headline, colours and
+                        logo on it.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-[14px]">The image is not ready.</div>
+                      <Button
+                        secondary={true}
+                        onClick={() => post && makeImage(post, size)}
+                        className="rounded-[8px]"
+                      >
+                        Try again
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
               {post.image && (
                 <div className="flex flex-col gap-[12px]">
                   <div className="relative">

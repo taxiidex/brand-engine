@@ -294,19 +294,34 @@ ${site.text}`,
     let photoUrl = options.photoUrl;
     let photoCredit: { name: string; link: string } | undefined;
     if (options.template === 'photo-hook') {
-      if (!photoUrl) {
+      if (photoUrl) {
+        photo = await this._stockService.download(photoUrl);
+      } else {
         const found = await this.searchPhotos(
           options.photoQuery || brand.niche || brand.businessName,
           options.size
         );
-        const pool = found.photos.slice(0, options.varyPhoto ? 5 : 1);
-        const picked = pool[Math.floor(Math.random() * pool.length)];
-        photoUrl = picked?.url;
-        photoCredit = picked?.credit;
+        // a random one of the first few, so generating again changes the
+        // photo too; if it cannot be downloaded, the next ones are tried
+        const pool = found.photos.slice(0, options.varyPhoto ? 5 : 3);
+        const start = options.varyPhoto
+          ? Math.floor(Math.random() * pool.length)
+          : 0;
+        const ordered = [...pool.slice(start), ...pool.slice(0, start)];
+        const startedAt = Date.now();
+        for (const candidate of ordered.slice(0, 3)) {
+          // never keep the client waiting much longer than this
+          if (Date.now() - startedAt > 20_000) {
+            break;
+          }
+          photo = await this._stockService.download(candidate.url);
+          if (photo) {
+            photoUrl = candidate.url;
+            photoCredit = candidate.credit;
+            break;
+          }
+        }
       }
-      photo = photoUrl
-        ? await this._stockService.download(photoUrl)
-        : undefined;
     }
 
     const logo = brand.logoUrl
@@ -361,6 +376,8 @@ ${site.text}`,
       width: image.width,
       height: image.height,
       preview: image.dataUrl,
+      photoUrl: image.photoUrl || null,
+      photoCredit: image.photoCredit || null,
     };
     if (!body.save) {
       return { ...result, media: null };
@@ -439,8 +456,10 @@ Channels: ${channels.join(', ') || 'Facebook, Instagram, LinkedIn'}`,
       ),
     };
 
-    if (body.style === 'text') {
-      return { ...post, style: 'text', image: null };
+    // text only, or the screen fetches the image on its own so the client
+    // can read the text while the image is being made
+    if (body.style === 'text' || body.skipImage) {
+      return { ...post, style: body.style, image: null };
     }
 
     const size = (body.size as ImageSize) || 'feed';

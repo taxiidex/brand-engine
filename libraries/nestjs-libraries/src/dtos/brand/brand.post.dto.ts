@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsDefined,
   IsIn,
@@ -52,6 +53,11 @@ export class GeneratePostDto {
   })
   @MaxLength(500)
   photoUrl?: string;
+
+  // return the text only; the image is requested separately
+  @IsOptional()
+  @IsBoolean()
+  skipImage?: boolean;
 }
 
 // A generated (and possibly edited) post, sent to the client's channels

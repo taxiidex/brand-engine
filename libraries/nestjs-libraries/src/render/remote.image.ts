@@ -3,9 +3,11 @@ import { getSsrfSafeDispatcher } from '@gitroom/nestjs-libraries/dtos/webhooks/s
 
 const logger = new Logger('downloadImage');
 
-const ATTEMPTS = 3;
-// statuses that are worth another try: the CDNs of free photo sites answer
-// 429 now and then even for a single request
+// Free photo CDNs throttle one server to roughly a download every few
+// seconds and answer 429 in between (measured on Pixabay: the block lasts
+// 3 to 9 seconds), so retries back off for up to about 15 seconds in total.
+const RETRY_DELAYS_MS = [1500, 3000, 4500, 6000];
+const ATTEMPTS = RETRY_DELAYS_MS.length + 1;
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,7 +54,13 @@ export async function downloadImage(
       if (!res.ok || !res.body) {
         await res.body?.cancel().catch(() => undefined);
         if (RETRY_STATUS.has(res.status) && attempt < ATTEMPTS) {
-          await sleep(700 * attempt);
+          const retryAfter = Number(res.headers.get('retry-after') || 0);
+          await sleep(
+            Math.max(
+              RETRY_DELAYS_MS[attempt - 1],
+              Math.min(retryAfter, 10) * 1000
+            )
+          );
           continue;
         }
         logger.warn(`${parsed.hostname} answered ${res.status}`);
@@ -85,7 +93,7 @@ export async function downloadImage(
       return Buffer.concat(chunks);
     } catch (err) {
       if (attempt < ATTEMPTS) {
-        await sleep(700 * attempt);
+        await sleep(RETRY_DELAYS_MS[attempt - 1]);
         continue;
       }
       logger.warn(`${parsed.hostname} download failed: ${err}`);
