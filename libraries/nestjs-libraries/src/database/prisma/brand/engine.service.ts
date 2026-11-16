@@ -1381,6 +1381,10 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
       const buffers = await Promise.all(urls.map(download));
       buffers.forEach((buffer, i) => buffer && clips.push({ buffer, url: urls[i] }));
     }
+    // how long each step takes, logged with the result
+    const started = Date.now();
+    const timing: string[] = [];
+    const mark = (step: string) => timing.push(`${step} ${((Date.now() - started) / 1000).toFixed(1)}s`);
     let picked: StockVideo[] = [];
     if (clips.length < needed && this._stock.isConfigured()) {
       const avoid = new Set<string>(opts.newClips ? post.clipIds || [] : []);
@@ -1426,6 +1430,7 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
         return undefined;
       }
     })();
+    mark(`clips(${clips.length})`);
     const frames = await this._design.videoFrames({
       width,
       height,
@@ -1458,6 +1463,7 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
     }));
     scenes.push({ still: frames.end.still, seconds: frames.end.seconds, layers: layersOf(frames.end.steps) });
 
+    mark('frames');
     let rendered: { buffer: Buffer; seconds: number };
     try {
       rendered = await this._video.renderStory({
@@ -1471,6 +1477,7 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
       this._logger.warn(`Story video failed: ${err}`);
       throw new BadRequestException('We could not make the video. Try other clips.');
     }
+    mark('ffmpeg');
     const stored = await this.storage.uploadFile({
       buffer: rendered.buffer,
       originalname: 'video.mp4',
@@ -1490,7 +1497,11 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
     });
     const seenNames = new Set<string>();
     return {
-      url: stored.path as string,
+      url: (() => {
+        mark('stored');
+        this._logger.log(`Video ${post.id} (${size}, ${lines.length} scenes): ${timing.join(', ')}`);
+        return stored.path as string;
+      })(),
       size,
       width,
       height,

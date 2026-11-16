@@ -210,10 +210,14 @@ export class VideoRenderer {
             const y = horizontal
               ? '(ih-oh)/2'
               : `(ih-oh)/2+min((ih-oh)/2,${Math.round(H * 0.05)})*(2*t/${D}-1)*${sign}`;
+            // crop the clip to the frame's shape first, so only that part
+            // is scaled (a landscape clip in a 9:16 video would otherwise be
+            // scaled to three times the pixels and mostly thrown away)
             filters.push(
-              `[${sceneInput[i]}:v]trim=duration=${D},setpts=PTS-STARTPTS,` +
-                `scale=${sw}:${sh}:force_original_aspect_ratio=increase,` +
-                `crop=${W}:${H}:x='${x}':y='${y}',fps=30,` +
+              `[${sceneInput[i]}:v]trim=duration=${D},setpts=PTS-STARTPTS,fps=30,` +
+                `crop='trunc(min(iw,ih*${W}/${H})/2)*2':'trunc(min(ih,iw*${H}/${W})/2)*2',` +
+                `scale=${sw}:${sh},` +
+                `crop=${W}:${H}:x='${x}':y='${y}',` +
                 `eq=brightness=-0.02:saturation=1.08,setsar=1[c${i}]`
             );
           } else {
