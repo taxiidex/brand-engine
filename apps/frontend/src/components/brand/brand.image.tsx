@@ -12,6 +12,7 @@ const field =
 
 type Photo = {
   id: string;
+  provider: string;
   thumb: string;
   url: string;
   credit: { name: string; link: string };
@@ -230,7 +231,7 @@ export const BrandImageStudio: FC<{ niche: string }> = ({ niche }) => {
               <div className="text-[13px] text-customColor18">
                 {t(
                   'brand_photos_not_configured',
-                  'Stock photos are not switched on yet. Ask your administrator to add a Pexels key. You can still use the quote and brand cards.'
+                  'Stock photos are not switched on yet. Ask your administrator to add a free Pixabay key. You can still use the quote and brand cards.'
                 )}
               </div>
             )}
@@ -274,7 +275,8 @@ export const BrandImageStudio: FC<{ niche: string }> = ({ niche }) => {
                       >
                         {selected.credit.name}
                       </a>{' '}
-                      {t('brand_photo_on_pexels', 'on Pexels')}
+                      {t('brand_photo_on', 'on')}{' '}
+                      {selected.provider === 'pexels' ? 'Pexels' : 'Pixabay'}
                     </>
                   ) : (
                     t(

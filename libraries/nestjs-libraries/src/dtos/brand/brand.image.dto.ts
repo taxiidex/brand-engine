@@ -46,17 +46,18 @@ export class GenerateBrandImageDto {
   @IsIn(SIZES)
   size: string;
 
-  // What to search Pexels for when no photo was picked
+  // What to search for when no photo was picked
   @IsOptional()
   @IsString()
   @MaxLength(80)
   photoQuery?: string;
 
-  // A photo picked from the search results. Only Pexels' own image host is
-  // accepted, and it is checked again when it is downloaded.
+  // A photo picked from the search results. Only the stock providers' own
+  // image hosts are accepted, and they are checked again when it is
+  // downloaded.
   @IsOptional()
   @IsUrl({ require_protocol: true, protocols: ['https'] })
-  @Matches(/^https:\/\/images\.pexels\.com\//)
+  @Matches(/^https:\/\/(images\.pexels\.com|([a-z0-9-]+\.)?pixabay\.com)\//)
   @MaxLength(500)
   photoUrl?: string;
 

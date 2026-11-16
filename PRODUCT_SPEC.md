@@ -194,8 +194,8 @@ what Postiz has, Polotno editor key, mobile app, billing/Stripe.
 
 **Phase 2 (done):**
 - Images render with **`@napi-rs/canvas`**, not `canvas`: the `canvas` package's native module is not built in the Docker image (pnpm blocks its build script) and needs system graphics libraries. `@napi-rs/canvas` ships prebuilt binaries.
-- **Pexels only** for now. Unsplash is deferred: its API terms require production approval and a download-tracking call per use. The provider interface leaves room for it.
+- **Stock photo providers: Pixabay (free key, instant) and Pexels.** Pexels paused new API keys on 2026-11-16, so Pixabay is the one in use; both sit behind a provider interface and are merged when both have keys. Unsplash is deferred: its API terms require production approval and a download-tracking call per use.
 - Templates: photo with headline, quote card, brand card (carousel and stat card come later). Sizes: feed 4:5, square, landscape, story 9:16.
 - Logos and photos are decoded only if they are PNG, JPEG or WebP. SVG is refused because the renderer would resolve whatever files or URLs it points at.
 - Fonts in the image: Inter, DejaVu, Noto core (many scripts) and Noto Color Emoji. **CJK is not included** (about 100 MB); add `fonts-noto-cjk` if Chinese, Japanese or Korean customers appear.
-- Needs `PEXELS_API_KEY` (free). Without it the quote and brand cards still work.
+- Needs `PIXABAY_API_KEY` and/or `PEXELS_API_KEY`. Without a key the quote and brand cards still work.
