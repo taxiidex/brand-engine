@@ -1,40 +1,50 @@
 'use client';
 
-import React, { FC, useCallback, useEffect, useState } from 'react';
-import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import React, { FC, useCallback, useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { FormProvider, useForm } from 'react-hook-form';
+import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { Button } from '@gitroom/react/form/button';
-import { Input } from '@gitroom/react/form/input';
-import { Select } from '@gitroom/react/form/select';
-import { Textarea } from '@gitroom/react/form/textarea';
-import { ColorPicker } from '@gitroom/react/form/color.picker';
 import { useToaster } from '@gitroom/react/toaster/toaster';
-import { useT } from '@gitroom/react/translation/get.transation.service.client';
-import { BrandImageStudio } from '@gitroom/frontend/components/brand/brand.image';
+import {
+  Card,
+  ChoiceChips,
+  Field,
+  TagInput,
+  errorMessage,
+  inputClass,
+  textareaClass,
+} from '@gitroom/frontend/components/brand/ui';
 
-const TONES = [
-  'professional',
-  'friendly',
-  'bold',
-  'playful',
-  'luxury',
-  'technical',
-  'inspirational',
-  'authoritative',
-];
+export interface Brand {
+  id?: string;
+  businessName: string;
+  websiteUrl: string;
+  niche: string;
+  description: string;
+  tone: string;
+  language: string;
+  targetTopics: string[];
+  keywords: string[];
+  hashtags: string[];
+  primaryColor: string;
+  accentColor: string;
+  fontFamily: string;
+  logoUrl: string;
+  ctaText: string;
+  ctaUrl: string;
+}
 
-const DEFAULTS = {
+const EMPTY: Brand = {
   businessName: '',
   websiteUrl: '',
   niche: '',
   description: '',
   tone: 'friendly',
   language: 'en',
-  topics: '',
-  keywords: '',
-  hashtags: '',
-  primaryColor: '#000000',
+  targetTopics: [],
+  keywords: [],
+  hashtags: [],
+  primaryColor: '#111111',
   accentColor: '#FF5733',
   fontFamily: 'Inter',
   logoUrl: '',
@@ -42,8 +52,44 @@ const DEFAULTS = {
   ctaUrl: '',
 };
 
+const TONES = [
+  { value: 'friendly', label: 'Friendly' },
+  { value: 'professional', label: 'Professional' },
+  { value: 'bold', label: 'Bold' },
+  { value: 'playful', label: 'Playful' },
+  { value: 'luxury', label: 'Luxury' },
+  { value: 'inspirational', label: 'Inspiring' },
+  { value: 'authoritative', label: 'Expert' },
+  { value: 'technical', label: 'Technical' },
+];
+
+const LANGUAGES = [
+  ['en', 'English'],
+  ['ar', 'Arabic'],
+  ['ur', 'Urdu'],
+  ['hi', 'Hindi'],
+  ['es', 'Spanish'],
+  ['fr', 'French'],
+  ['de', 'German'],
+  ['pt', 'Portuguese'],
+  ['it', 'Italian'],
+  ['nl', 'Dutch'],
+  ['tr', 'Turkish'],
+  ['id', 'Indonesian'],
+  ['sw', 'Swahili'],
+];
+
+// fonts the image renderer has installed; anything else falls back to Inter
+const FONTS = [
+  'Inter',
+  'Noto Sans',
+  'Noto Serif',
+  'DejaVu Sans',
+  'DejaVu Serif',
+];
+
 // white or near-black, whichever reads better on the given colour
-const readableOn = (hex: string) => {
+export const readableOn = (hex: string) => {
   const n = parseInt((hex || '#000000').slice(1), 16);
   const channel = (v: number) => {
     const c = v / 255;
@@ -56,364 +102,434 @@ const readableOn = (hex: string) => {
   return luminance > 0.4 ? '#111111' : '#FFFFFF';
 };
 
-const toList = (text: string) =>
-  text
-    .split(/[\n,]/)
-    .map((v) => v.trim())
-    .filter(Boolean);
-
-const useBrand = () => {
+export const useBrand = () => {
   const fetch = useFetch();
   const load = useCallback(async () => {
     // no brand yet comes back as an empty body, which is not valid JSON
     const text = await (await fetch('/brand')).text();
-    return text ? JSON.parse(text) : null;
+    return text ? (JSON.parse(text) as Brand) : null;
   }, []);
-  return useSWR('brand', load);
+  return useSWR('brand', load, { revalidateOnFocus: false });
 };
 
-const errorMessage = async (res: Response, fallback: string) => {
-  const body = await res.json().catch(() => ({}));
-  return Array.isArray(body?.message)
-    ? body.message.join(', ')
-    : body?.message || fallback;
-};
+const fromSaved = (b: Partial<Brand> | null | undefined): Brand => ({
+  ...EMPTY,
+  ...(Object.fromEntries(
+    Object.entries(b || {}).filter(([, v]) => v !== null && v !== undefined)
+  ) as Partial<Brand>),
+});
 
-export const BrandSettings: FC = () => {
+export const BrandForm: FC<{
+  // read this website as soon as the form opens (first-time setup)
+  autoAnalyzeUrl?: string;
+  saveLabel?: string;
+  onSaved?: () => void;
+}> = ({ autoAnalyzeUrl, saveLabel = 'Save', onSaved }) => {
   const fetch = useFetch();
-  const t = useT();
   const toaster = useToaster();
-  const { data, mutate } = useBrand();
-  const form = useForm({ defaultValues: DEFAULTS });
-  const [website, setWebsite] = useState('');
-  const [analyzing, setAnalyzing] = useState(false);
+  const { data, mutate, isLoading } = useBrand();
+  const [brand, setBrand] = useState<Brand>(EMPTY);
+  const [website, setWebsite] = useState(autoAnalyzeUrl || '');
+  const [reading, setReading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [more, setMore] = useState(false);
+  const autoRan = useRef(false);
+
+  const set = <K extends keyof Brand>(key: K, value: Brand[K]) =>
+    setBrand((b) => ({ ...b, [key]: value }));
 
   useEffect(() => {
-    if (!data) {
-      return;
+    if (data) {
+      setBrand(fromSaved(data));
+      setWebsite((w) => w || data.websiteUrl || '');
     }
-    form.reset({
-      businessName: data.businessName || '',
-      websiteUrl: data.websiteUrl || '',
-      niche: data.niche || '',
-      description: data.description || '',
-      tone: data.tone || 'friendly',
-      language: data.language || 'en',
-      topics: (data.targetTopics || []).join('\n'),
-      keywords: (data.keywords || []).join('\n'),
-      hashtags: (data.hashtags || []).join(', '),
-      primaryColor: data.primaryColor || DEFAULTS.primaryColor,
-      accentColor: data.accentColor || DEFAULTS.accentColor,
-      fontFamily: data.fontFamily || DEFAULTS.fontFamily,
-      logoUrl: data.logoUrl || '',
-      ctaText: data.ctaText || '',
-      ctaUrl: data.ctaUrl || '',
-    });
-    setWebsite(data.websiteUrl || '');
   }, [data]);
 
-  const analyze = useCallback(async () => {
-    if (!website.trim()) {
-      return;
-    }
-    setAnalyzing(true);
-    try {
-      const res = await fetch('/brand/analyze', {
-        method: 'POST',
-        body: JSON.stringify({ url: website }),
-      });
-      if (!res.ok) {
-        toaster.show(
-          await errorMessage(
-            res,
-            t('brand_analyze_failed', 'We could not read that website')
-          ),
-          'warning'
-        );
+  const readWebsite = useCallback(
+    async (url: string) => {
+      if (!url.trim()) {
         return;
       }
-      const draft = await res.json();
-      const set = (name: keyof typeof DEFAULTS, value?: string) => {
-        if (value) {
-          form.setValue(name, value, { shouldDirty: true });
+      setReading(true);
+      try {
+        const res = await fetch('/brand/analyze', {
+          method: 'POST',
+          body: JSON.stringify({ url }),
+        });
+        if (!res.ok) {
+          toaster.show(
+            await errorMessage(res, 'We could not read that website.'),
+            'warning'
+          );
+          return;
         }
-      };
-      set('businessName', draft.businessName);
-      set('websiteUrl', draft.websiteUrl);
-      set('niche', draft.niche);
-      set('description', draft.description);
-      set('tone', draft.tone);
-      set('language', draft.language);
-      set('topics', (draft.targetTopics || []).join('\n'));
-      set('keywords', (draft.keywords || []).join('\n'));
-      set('hashtags', (draft.hashtags || []).join(', '));
-      set('primaryColor', draft.primaryColor);
-      set('accentColor', draft.accentColor);
-      set('fontFamily', draft.fontFamily);
-      set('logoUrl', draft.logoUrl);
-      set('ctaText', draft.ctaText);
-      set('ctaUrl', draft.ctaUrl);
-      if (draft.aiGenerated) {
+        const draft = await res.json();
+        setBrand((b) => ({
+          ...b,
+          ...(Object.fromEntries(
+            Object.entries(draft).filter(
+              ([k, v]) =>
+                k in EMPTY &&
+                v !== null &&
+                v !== undefined &&
+                v !== '' &&
+                !(Array.isArray(v) && !v.length)
+            )
+          ) as Partial<Brand>),
+        }));
         toaster.show(
-          t(
-            'brand_analyzed',
-            'Brand details filled in from your website. Review them, then save.'
-          ),
-          'success'
+          draft.aiGenerated
+            ? 'We filled this in from your website. Check it and change anything you like.'
+            : 'We picked up your colours and logo. Please fill in the rest.',
+          draft.aiGenerated ? 'success' : 'warning'
         );
-      } else {
-        toaster.show(
-          t(
-            'brand_analyzed_without_ai',
-            'We read your colours, font and logo, but the AI summary is unavailable. Fill in the rest by hand.'
-          ),
-          'warning'
-        );
+      } finally {
+        setReading(false);
       }
-    } finally {
-      setAnalyzing(false);
-    }
-  }, [website, form, t]);
+    },
+    [toaster]
+  );
 
-  const save = useCallback(
-    async (values: typeof DEFAULTS) => {
+  // first-time setup: read the website straight away, but never over a brand
+  // that was already saved
+  useEffect(() => {
+    if (autoAnalyzeUrl && !autoRan.current && !isLoading && !data) {
+      autoRan.current = true;
+      readWebsite(autoAnalyzeUrl);
+    }
+  }, [autoAnalyzeUrl, isLoading, data, readWebsite]);
+
+  const save = useCallback(async () => {
+    if (!brand.businessName.trim() || !brand.niche.trim()) {
+      toaster.show(
+        'Please fill in your business name and what you do.',
+        'warning'
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      const { id, ...rest } = brand;
       const res = await fetch('/brand', {
         method: 'POST',
         body: JSON.stringify({
-          businessName: values.businessName,
-          websiteUrl: values.websiteUrl || undefined,
-          niche: values.niche,
-          description: values.description || undefined,
-          tone: values.tone,
-          language: values.language,
-          targetTopics: toList(values.topics),
-          keywords: toList(values.keywords),
-          hashtags: toList(values.hashtags).map((h) =>
-            h.replace(/^#/, '').replace(/\s+/g, '')
-          ),
-          primaryColor: values.primaryColor,
-          accentColor: values.accentColor,
-          fontFamily: values.fontFamily,
-          logoUrl: values.logoUrl || undefined,
-          ctaText: values.ctaText || undefined,
-          ctaUrl: values.ctaUrl || undefined,
+          ...rest,
+          websiteUrl: rest.websiteUrl || undefined,
+          description: rest.description || undefined,
+          logoUrl: rest.logoUrl || undefined,
+          ctaText: rest.ctaText || undefined,
+          ctaUrl: rest.ctaUrl || undefined,
         }),
       });
       if (!res.ok) {
         toaster.show(
-          await errorMessage(
-            res,
-            t('brand_save_failed', 'We could not save your brand')
-          ),
+          await errorMessage(res, 'We could not save your brand.'),
           'warning'
         );
         return;
       }
       await mutate();
-      toaster.show(t('brand_saved', 'Brand saved'), 'success');
-    },
-    [mutate, t]
-  );
+      toaster.show('Your brand is saved.', 'success');
+      onSaved?.();
+    } finally {
+      setSaving(false);
+    }
+  }, [brand, mutate, onSaved, toaster]);
 
-  const primary = form.watch('primaryColor');
-  const accent = form.watch('accentColor');
-  const font = form.watch('fontFamily');
-  const name = form.watch('businessName');
-  const logo = form.watch('logoUrl');
-  const cta = form.watch('ctaText');
-
-  // The Settings page already wraps every tab in its own <form>, and a form
-  // inside a form is invalid HTML (the browser then submits the page instead of
-  // calling save). So there is no form element here, Save is a plain button, and
-  // Enter in a text box must not trigger the outer profile form either.
   return (
     <div
-      className="flex flex-col"
+      className="flex flex-col gap-[16px]"
+      // no implicit form submission: Enter in a text box does nothing
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+        if (
+          e.key === 'Enter' &&
+          (e.target as HTMLElement).tagName === 'INPUT'
+        ) {
           e.preventDefault();
         }
       }}
     >
-      <h3 className="text-[20px]">{t('brand', 'Brand')}</h3>
-      <div className="text-customColor18 mt-[4px]">
-        {t(
-          'brand_description',
-          'Tell us who you are once. Every post we create for you will use this name, tone, topics, colours and font.'
-        )}
-      </div>
-
-      <div className="my-[16px] bg-sixth border-fifth border rounded-[4px] p-[24px] flex flex-col gap-[12px]">
-        <div className="text-[14px]">
-          {t('brand_fill_from_website', 'Fill in from your website')}
-        </div>
-        <div className="flex gap-[12px] items-center">
+      <Card
+        title="Start from your website"
+        hint="We read your website and fill in everything below for you. You can change anything afterwards."
+      >
+        <div className="flex gap-[12px] mobile:flex-col">
           <input
             value={website}
             onChange={(e) => setWebsite(e.target.value)}
-            placeholder="https://yourbusiness.com"
-            className="bg-newBgColorInner h-[42px] px-[16px] outline-none border-newTableBorder border rounded-[8px] text-textColor placeholder-textColor placeholder:opacity-50 flex-1"
+            placeholder="yourbusiness.com"
+            className={inputClass}
           />
-          <Button onClick={analyze} loading={analyzing} disabled={analyzing}>
-            {t('brand_read_website', 'Read my website')}
+          <Button
+            onClick={() => readWebsite(website)}
+            loading={reading}
+            disabled={reading || !website.trim()}
+            className="rounded-[8px] !h-[44px] whitespace-nowrap"
+          >
+            Read my website
           </Button>
         </div>
-      </div>
+        {reading && (
+          <div className="text-[14px] text-textItemBlur">
+            Reading your website and getting to know your business. This takes
+            about 10 seconds...
+          </div>
+        )}
+      </Card>
 
-      <FormProvider {...form}>
-        <div>
-          <div className="bg-sixth border-fifth border rounded-[4px] p-[24px] flex flex-col gap-[4px]">
-            <Input
-              label="Business name"
-              translationKey="label_brand_business_name"
-              {...form.register('businessName', { required: true })}
+      <Card title="About your business">
+        <div className="grid grid-cols-2 gap-[16px] mobile:grid-cols-1">
+          <Field label="Business name">
+            <input
+              value={brand.businessName}
+              onChange={(e) => set('businessName', e.target.value)}
+              placeholder="Green Cab Co"
+              className={inputClass}
             />
-            <Input
-              label="Website"
-              translationKey="label_brand_website"
-              {...form.register('websiteUrl')}
+          </Field>
+          <Field label="What you do" hint="A few words, like a tagline.">
+            <input
+              value={brand.niche}
+              onChange={(e) => set('niche', e.target.value)}
+              placeholder="Airport taxis in Dublin"
+              className={inputClass}
             />
-            <Input
-              label="What you do (niche)"
-              translationKey="label_brand_niche"
-              placeholder="e.g. airport taxi service in Dublin"
-              {...form.register('niche', { required: true })}
+          </Field>
+        </div>
+        <Field
+          label="Describe your business"
+          hint="One or two sentences: what you offer and who it is for."
+        >
+          <textarea
+            value={brand.description}
+            onChange={(e) => set('description', e.target.value)}
+            className={textareaClass}
+          />
+        </Field>
+        <Field label="Website">
+          <input
+            value={brand.websiteUrl}
+            onChange={(e) => set('websiteUrl', e.target.value)}
+            placeholder="https://yourbusiness.com"
+            className={inputClass}
+          />
+        </Field>
+      </Card>
+
+      <Card
+        title="How you sound"
+        hint="Your posts are written in this voice and language."
+      >
+        <ChoiceChips
+          options={TONES}
+          value={brand.tone}
+          onChange={(v) => set('tone', v)}
+        />
+        <Field label="Language of your posts">
+          <select
+            value={brand.language}
+            onChange={(e) => set('language', e.target.value)}
+            className={inputClass}
+          >
+            {!LANGUAGES.some(([code]) => code === brand.language) && (
+              <option value={brand.language}>{brand.language}</option>
+            )}
+            {LANGUAGES.map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </Card>
+
+      <Card
+        title="What you post about"
+        hint="Topics your customers care about. Each new post picks one of these unless you choose your own."
+      >
+        <TagInput
+          values={brand.targetTopics}
+          onChange={(v) => set('targetTopics', v)}
+          placeholder="Type a topic and press Enter"
+          max={20}
+        />
+      </Card>
+
+      <Card title="Your look" hint="Used on every image we make for you.">
+        <div className="grid grid-cols-[auto,1fr] gap-[20px] items-start mobile:grid-cols-1">
+          <div className="w-[96px] h-[96px] rounded-[12px] bg-white flex items-center justify-center overflow-hidden border border-newTableBorder">
+            {brand.logoUrl ? (
+              <img
+                src={brand.logoUrl}
+                alt="Your logo"
+                className="max-w-[80px] max-h-[80px] object-contain"
+              />
+            ) : (
+              <span className="text-[12px] text-[#888]">No logo</span>
+            )}
+          </div>
+          <Field
+            label="Logo address"
+            hint="A link to your logo as PNG or JPG. Reading your website usually finds it."
+          >
+            <input
+              value={brand.logoUrl}
+              onChange={(e) => set('logoUrl', e.target.value)}
+              placeholder="https://yourbusiness.com/logo.png"
+              className={inputClass}
             />
-            <Textarea
-              label="Short description"
-              translationKey="label_brand_description"
-              className="!text-textColor"
-              {...form.register('description')}
-            />
-            <Select
-              label="Tone of voice"
-              translationKey="label_brand_tone"
-              {...form.register('tone')}
+          </Field>
+        </div>
+        <div className="grid grid-cols-3 gap-[16px] mobile:grid-cols-1">
+          <Field label="Main colour">
+            <div className="flex gap-[8px] items-center">
+              <input
+                type="color"
+                value={brand.primaryColor}
+                onChange={(e) =>
+                  set('primaryColor', e.target.value.toUpperCase())
+                }
+                className="w-[44px] h-[44px] shrink-0 rounded-[8px] border border-newTableBorder bg-transparent cursor-pointer"
+              />
+              <input
+                value={brand.primaryColor}
+                onChange={(e) => set('primaryColor', e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </Field>
+          <Field label="Accent colour">
+            <div className="flex gap-[8px] items-center">
+              <input
+                type="color"
+                value={brand.accentColor}
+                onChange={(e) =>
+                  set('accentColor', e.target.value.toUpperCase())
+                }
+                className="w-[44px] h-[44px] shrink-0 rounded-[8px] border border-newTableBorder bg-transparent cursor-pointer"
+              />
+              <input
+                value={brand.accentColor}
+                onChange={(e) => set('accentColor', e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </Field>
+          <Field label="Font">
+            <select
+              value={brand.fontFamily}
+              onChange={(e) => set('fontFamily', e.target.value)}
+              className={inputClass}
             >
-              {TONES.map((tone) => (
-                <option key={tone} value={tone}>
-                  {tone}
+              {!FONTS.includes(brand.fontFamily) && (
+                <option value={brand.fontFamily}>
+                  {brand.fontFamily} (images use Inter)
+                </option>
+              )}
+              {FONTS.map((f) => (
+                <option key={f} value={f}>
+                  {f}
                 </option>
               ))}
-            </Select>
-            <Input
-              label="Language code"
-              translationKey="label_brand_language"
-              placeholder="en"
-              {...form.register('language')}
-            />
-            <Textarea
-              label="Topics to post about (one per line)"
-              translationKey="label_brand_topics"
-              className="!text-textColor"
-              {...form.register('topics')}
-            />
-            <Textarea
-              label="SEO keywords (one per line)"
-              translationKey="label_brand_keywords"
-              className="!text-textColor"
-              {...form.register('keywords')}
-            />
-            <Input
-              label="Hashtags (comma separated)"
-              translationKey="label_brand_hashtags"
-              {...form.register('hashtags')}
-            />
-            <div className="grid grid-cols-2 gap-[24px] mobile:grid-cols-1">
-              <ColorPicker
-                name="primaryColor"
-                label="Main colour"
-                translationKey="label_brand_primary_color"
-                enabled={true}
-                canBeCancelled={false}
-              />
-              <ColorPicker
-                name="accentColor"
-                label="Accent colour"
-                translationKey="label_brand_accent_color"
-                enabled={true}
-                canBeCancelled={false}
-              />
-            </div>
-            <Input
-              label="Font"
-              translationKey="label_brand_font"
-              {...form.register('fontFamily')}
-            />
-            <Input
-              label="Logo address"
-              translationKey="label_brand_logo"
-              placeholder="https://yourbusiness.com/logo.png"
-              {...form.register('logoUrl')}
-            />
-            <div className="grid grid-cols-2 gap-[24px] mobile:grid-cols-1">
-              <Input
-                label="Call to action"
-                translationKey="label_brand_cta_text"
-                placeholder="Book now"
-                {...form.register('ctaText')}
-              />
-              <Input
-                label="Call to action link"
-                translationKey="label_brand_cta_url"
-                {...form.register('ctaUrl')}
-              />
-            </div>
-
-            <div className="text-[14px] mt-[8px]">
-              {t('brand_preview', 'Preview')}
-            </div>
-            <div
-              className="rounded-[8px] p-[24px] flex flex-col gap-[12px] w-[320px] max-w-full"
-              style={{
-                background: primary,
-                color: readableOn(primary),
-                fontFamily: `${font}, sans-serif`,
-              }}
-            >
-              {!!logo && (
-                <img
-                  src={logo}
-                  alt=""
-                  className="h-[32px] w-auto self-start object-contain"
-                />
-              )}
-              <div className="text-[22px] font-bold leading-[1.2]">
-                {name || t('brand_preview_name', 'Your business')}
-              </div>
-              <div className="text-[14px] opacity-90">
-                {t(
-                  'brand_preview_hook',
-                  'This is how your branded posts will look.'
-                )}
-              </div>
-              <div
-                className="h-[6px] w-[80px] rounded-[3px]"
-                style={{ background: accent }}
-              />
-              {!!cta && (
-                <div
-                  className="self-start rounded-[4px] px-[12px] py-[6px] text-[13px] font-bold"
-                  style={{ background: accent, color: readableOn(accent) }}
-                >
-                  {cta}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-[16px]">
-              <Button
-                onClick={form.handleSubmit(save)}
-                loading={form.formState.isSubmitting}
-                disabled={form.formState.isSubmitting}
-              >
-                {t('save_brand', 'Save brand')}
-              </Button>
-            </div>
-          </div>
+            </select>
+          </Field>
         </div>
-      </FormProvider>
-      {!!data?.id && <BrandImageStudio niche={data.niche || ''} />}
+        <div
+          className="rounded-[12px] p-[20px] flex flex-col gap-[10px] max-w-[360px]"
+          style={{
+            background: brand.primaryColor,
+            color: readableOn(brand.primaryColor),
+            fontFamily: `${brand.fontFamily}, Inter, sans-serif`,
+          }}
+        >
+          <div className="text-[20px] font-[700] leading-[1.2]">
+            {brand.businessName || 'Your business'}
+          </div>
+          <div className="text-[14px] opacity-90">
+            This is how your brand looks on your posts.
+          </div>
+          <div
+            className="h-[5px] w-[64px] rounded-[3px]"
+            style={{ background: brand.accentColor }}
+          />
+        </div>
+      </Card>
+
+      <Card
+        title="Call to action"
+        hint="What you want people to do after reading a post."
+      >
+        <div className="grid grid-cols-2 gap-[16px] mobile:grid-cols-1">
+          <Field label="Button text">
+            <input
+              value={brand.ctaText}
+              onChange={(e) => set('ctaText', e.target.value)}
+              placeholder="Book now"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Link">
+            <input
+              value={brand.ctaUrl}
+              onChange={(e) => set('ctaUrl', e.target.value)}
+              placeholder="https://yourbusiness.com/book"
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      </Card>
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setMore((m) => !m)}
+          className="text-[14px] text-textItemBlur hover:text-textColor underline"
+        >
+          {more
+            ? 'Hide more options'
+            : 'More options: search keywords and hashtags'}
+        </button>
+      </div>
+      {more && (
+        <Card
+          title="Search keywords and hashtags"
+          hint="Words your customers search for. We work them into your posts naturally."
+        >
+          <Field label="Search keywords">
+            <TagInput
+              values={brand.keywords}
+              onChange={(v) => set('keywords', v)}
+              placeholder="Type a keyword and press Enter"
+              max={40}
+            />
+          </Field>
+          <Field label="Hashtags">
+            <TagInput
+              values={brand.hashtags}
+              onChange={(v) =>
+                set(
+                  'hashtags',
+                  v.map((h) => h.replace(/\s+/g, ''))
+                )
+              }
+              placeholder="Type a hashtag and press Enter"
+              max={20}
+              prefix="#"
+            />
+          </Field>
+        </Card>
+      )}
+
+      <div className="flex justify-end">
+        <Button
+          onClick={save}
+          loading={saving}
+          disabled={saving || reading}
+          className="rounded-[8px] !h-[48px] px-[32px]"
+        >
+          {saveLabel}
+        </Button>
+      </div>
     </div>
   );
 };

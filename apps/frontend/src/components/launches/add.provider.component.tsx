@@ -406,8 +406,11 @@ export const AddProviderComponent: FC<{
   update?: () => void;
   onboarding?: boolean;
   isMobile?: boolean;
+  // where to come back to after the account is connected (a path in this app)
+  redirectUrl?: string;
 }> = (props) => {
-  const { update, social, article, onboarding, isMobile } = props;
+  const { update, social, article, onboarding, isMobile, redirectUrl } =
+    props;
   const { isGeneral, extensionId } = useVariables();
   const toaster = useToaster();
   const router = useRouter();
@@ -478,6 +481,8 @@ export const AddProviderComponent: FC<{
             onboardingParam,
             isMobile
               ? `redirectUrl=${encodeURIComponent('postiz://integrations')}`
+              : redirectUrl
+              ? `redirectUrl=${encodeURIComponent(redirectUrl)}`
               : '',
           ]
             .filter(Boolean)
@@ -676,7 +681,7 @@ export const AddProviderComponent: FC<{
         }
         await gotoIntegration();
       },
-    [onboarding]
+    [onboarding, redirectUrl]
   );
 
   const t = useT();

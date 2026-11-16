@@ -14,7 +14,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { CheckPayment } from '@gitroom/frontend/components/layout/check.payment';
 import { ToolTip } from '@gitroom/frontend/components/layout/top.tip';
@@ -34,13 +34,10 @@ import { AnnouncementBanner } from '@gitroom/frontend/components/layout/announce
 import { Title } from '@gitroom/frontend/components/layout/title';
 import { TopMenu } from '@gitroom/frontend/components/layout/top.menu';
 import { LanguageComponent } from '@gitroom/frontend/components/layout/language.component';
-import { ChromeExtensionComponent } from '@gitroom/frontend/components/layout/chrome.extension.component';
 import NotificationComponent from '@gitroom/frontend/components/notifications/notification.component';
-import { OrganizationSelector } from '@gitroom/frontend/components/layout/organization.selector';
-import { InvoicesComponent } from '@gitroom/frontend/components/layout/invoices.component';
-import { StreakComponent } from '@gitroom/frontend/components/layout/streak.component';
+import { ProjectSwitcher } from '@gitroom/frontend/components/brand/project.switcher';
+import { useBrand } from '@gitroom/frontend/components/brand/brand';
 import { PreConditionComponent } from '@gitroom/frontend/components/layout/pre-condition.component';
-import { AttachToFeedbackIcon } from '@gitroom/frontend/components/new-layout/sentry.feedback.component';
 import { FirstBillingComponent } from '@gitroom/frontend/components/billing/first.billing.component';
 import { TrialTracker } from '@gitroom/frontend/components/layout/gtm.component';
 import { setSentryUser } from '@gitroom/react/sentry/initialize.sentry.client';
@@ -77,7 +74,20 @@ export const LayoutComponent = ({ children }: { children: ReactNode }) => {
     );
   }, [user]);
 
+  // A project without a brand starts with the guided setup on /start, which
+  // is shown full screen, without the menu.
+  const router = useRouter();
+  const { data: brand, error: brandError } = useBrand();
+  const setupPage = !!pathname?.startsWith('/start');
+  const needsSetup = brand === null && !setupPage;
+  useEffect(() => {
+    if (user && needsSetup) {
+      router.replace('/start');
+    }
+  }, [user, needsSetup]);
+
   if (!user) return null;
+  if ((brand === undefined && !brandError) || needsSetup) return null;
 
   return (
     <ContextWrapper user={user}>
@@ -99,6 +109,16 @@ export const LayoutComponent = ({ children }: { children: ReactNode }) => {
             <PreConditionComponent />
             <NewSubscription />
             <ContinueProvider />
+            {setupPage ? (
+              <div
+                className={clsx(
+                  'min-h-screen bg-newBgColor text-newTextColor',
+                  jakartaSans.className
+                )}
+              >
+                {children}
+              </div>
+            ) : (
             <div
               className={clsx(
                 'flex flex-col min-h-screen min-w-screen text-newTextColor p-[12px] mobile:p-[8px] mobile:pb-[80px]',
@@ -168,22 +188,14 @@ export const LayoutComponent = ({ children }: { children: ReactNode }) => {
                           <Title />
                         </div>
                         <div className="flex gap-[20px] mobile:gap-[14px] mobile:items-center text-textItemBlur">
-                          <StreakComponent />
+                          <ProjectSwitcher />
                           <div className="w-[1px] h-[20px] bg-blockSeparator mobile:hidden" />
-                          <OrganizationSelector />
-                          <InvoicesComponent />
                           <div className="hover:text-newTextColor">
                             <ModeComponent />
                           </div>
                           <div className="w-[1px] h-[20px] bg-blockSeparator mobile:hidden" />
                           <LanguageComponent />
-                          <div className="contents mobile:hidden">
-                            <ChromeExtensionComponent />
-                          </div>
                           <div className="w-[1px] h-[20px] bg-blockSeparator mobile:hidden" />
-                          <div className="contents mobile:hidden">
-                            <AttachToFeedbackIcon />
-                          </div>
                           <NotificationComponent />
                         </div>
                       </div>
@@ -195,6 +207,7 @@ export const LayoutComponent = ({ children }: { children: ReactNode }) => {
                 </>
               )}
             </div>
+            )}
           </CheckPayment>
         </MantineWrapper>
       </CopilotKit>

@@ -163,7 +163,8 @@ export async function proxy(request: NextRequest) {
     if (nextUrl.pathname === '/') {
       return NextResponse.redirect(
         new URL(
-          !!process.env.IS_GENERAL ? '/launches' : `/analytics`,
+          // the client's home screen; without a brand yet it sends them to /start
+          '/create',
           nextUrl.href
         )
       );

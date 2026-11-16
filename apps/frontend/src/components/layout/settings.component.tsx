@@ -28,7 +28,6 @@ import { Webhooks } from '@gitroom/frontend/components/webhooks/webhooks';
 import { Sets } from '@gitroom/frontend/components/sets/sets';
 import { SignaturesComponent } from '@gitroom/frontend/components/settings/signatures.component';
 import { Autopost } from '@gitroom/frontend/components/autopost/autopost';
-import { BrandSettings } from '@gitroom/frontend/components/brand/brand';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { SVGLine } from '@gitroom/frontend/components/launches/launches.component';
 import { GlobalSettings } from '@gitroom/frontend/components/settings/global.settings';
@@ -88,29 +87,12 @@ export const SettingsPopup: FC<{
   const list = useMemo(() => {
     const arr = [];
     arr.push({ tab: 'global_settings', label: t('global_settings', 'Global Settings') });
-    arr.push({ tab: 'brand', label: t('brand', 'Brand') });
-    // Populate tabs based on user permissions
-    if (user?.tier?.public_api && isGeneral && showLogout) {
-      arr.push({ tab: 'agents', label: t('agents_dev', 'Agents / Dev') });
-    }
+    // Clients only see their account and their team. Brand and accounts have
+    // their own pages; developer tools (API, webhooks, plugs, apps, sets,
+    // signatures, auto post) are not part of the client product.
     if (user?.tier?.team_members && isGeneral && user?.role !== 'USER') {
       arr.push({ tab: 'teams', label: t('teams', 'Teams') });
     }
-    if (user?.tier?.webhooks) {
-      arr.push({ tab: 'webhooks', label: t('webhooks_1', 'Webhooks') });
-    }
-    if (user?.tier?.autoPost) {
-      arr.push({ tab: 'autopost', label: t('auto_post', 'Auto Post') });
-    }
-    if (user?.tier.current !== 'FREE') {
-      arr.push({ tab: 'sets', label: t('sets', 'Sets') });
-    }
-    if (user?.tier.current !== 'FREE') {
-      arr.push({ tab: 'signatures', label: t('signatures', 'Signatures') });
-    }
-    arr.push({ tab: 'integrations', label: t('integrations', 'Integrations') });
-    arr.push({ tab: 'plugs', label: t('plugs', 'Plugs') });
-    arr.push({ tab: 'apps', label: t('apps', 'Apps') });
 
     return arr;
   }, [user, isGeneral, showLogout, t]);
@@ -174,11 +156,6 @@ export const SettingsPopup: FC<{
               {tab === 'global_settings' && (
                 <div>
                   <GlobalSettings />
-                </div>
-              )}
-              {tab === 'brand' && (
-                <div>
-                  <BrandSettings />
                 </div>
               )}
               {tab === 'teams' &&

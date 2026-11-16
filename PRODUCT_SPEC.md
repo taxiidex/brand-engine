@@ -201,3 +201,29 @@ what Postiz has, Polotno editor key, mobile app, billing/Stripe.
 - Needs `PIXABAY_API_KEY` and/or `PEXELS_API_KEY`. Without a key the quote and brand cards still work.
 
 **AI provider (done):** all new AI calls go through `LlmService` (`libraries/nestjs-libraries/src/llm/`), which speaks OpenAI or Claude. Set `LLM_PROVIDER` (`openai` or `anthropic`; default: whichever key exists), `LLM_MODEL` (default `gpt-4.1` / `claude-sonnet-5-5`) and `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Upstream's own `openai.service.ts` is left untouched so merges stay clean. Newer Claude models reject a forced tool choice, so Claude answers via a tool it is asked (not forced) to call, with JSON-in-text as fallback, and the answer is always re-validated against the zod schema.
+
+---
+
+## 10. Client experience (direction from Usman, 2026-11-16)
+
+The product is sold to **business owners who run their own social media, not developers**. The first UI (a Brand tab and image studio inside Postiz Settings) was rejected: a client could not tell what the software is for. Rules:
+
+- A guided start, in plain language, before anything else.
+- **All keys are ours** (AI, stock photos, rendering). A client is never asked for a key and never sees wording about keys.
+- Developer surfaces are hidden from clients: Agents/Dev, public API, webhooks, plugs, third-party apps, sets, signatures, auto post, MCP.
+
+### Journey
+
+1. **Sign up / log in** (Google button only when Google login is configured).
+2. **Create your project**: "What is your business called?" and "Your website (optional)". A project is one business with its own brand, channels and posts (a Postiz organization underneath). The first project is the one created at sign-up; "New project" adds more.
+3. **Tell us about your brand**: if a website was given, we read it and pre-fill everything ("Reading your website..."). The client reviews simple cards: name, what you do, short description, tone (chips), topics (chips), colours, logo, call to action. Keywords and hashtags sit under "More options".
+4. **Connect your social accounts**: large buttons for Facebook, Instagram, LinkedIn, X, TikTok, YouTube, Pinterest, Threads and the rest, each running the normal connect flow; connected ones show a tick. "Skip for now" is allowed.
+5. **Create a post** (the client's home screen from then on):
+   - "What do you want to post about?": topic chips from the brand, or their own words.
+   - Style: photo with headline, quote card, brand card, or text only.
+   - Where: tick the connected channels.
+   - **Generate**: our AI writes the caption, hashtags and image headline in the brand's voice and renders the branded image.
+   - The client edits if they want, then **Post now**, **Schedule** or **Save as draft**. Regenerate gives a new version.
+6. Everyday navigation for a client: Create post, Calendar, Media, Brand, Channels, Settings. A project switcher at the top with "New project".
+
+Not decided yet: the product name and logo shown to clients (working name Brand Engine).

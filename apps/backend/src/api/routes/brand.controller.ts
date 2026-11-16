@@ -13,6 +13,10 @@ import {
   StockSearchDto,
 } from '@gitroom/nestjs-libraries/dtos/brand/brand.image.dto';
 import { ImageSize } from '@gitroom/nestjs-libraries/render/image.renderer';
+import {
+  GeneratePostDto,
+  PublishPostDto,
+} from '@gitroom/nestjs-libraries/dtos/brand/brand.post.dto';
 
 @ApiTags('Brand')
 @Controller('/brand')
@@ -55,5 +59,25 @@ export class BrandController {
     @Body() body: GenerateBrandImageDto
   ) {
     return this._brandService.generateImage(org.id, body);
+  }
+
+  // Writes a post with our AI and renders its image; nothing is saved yet
+  @Post('/generate')
+  @Throttle({ default: { limit: 120, ttl: 3600000 } })
+  async generatePost(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: GeneratePostDto
+  ) {
+    return this._brandService.generatePost(org.id, body);
+  }
+
+  // Sends a post to the chosen accounts: now, at a time, or as a draft
+  @Post('/posts')
+  @Throttle({ default: { limit: 120, ttl: 3600000 } })
+  async publishPost(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: PublishPostDto
+  ) {
+    return this._brandService.publishPost(org.id, body);
   }
 }

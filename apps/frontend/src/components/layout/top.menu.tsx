@@ -217,9 +217,50 @@ export const useMenuItem = () => {
     },
   ] satisfies MenuItemInterface[] as MenuItemInterface[];
 
+  // The client-facing product: our own screens first, then Postiz's calendar
+  // and media library. Postiz's AI agent and analytics are not part of it.
+  const icon = (d: string) => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <path
+        d={d}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+  const calendar = firstMenu.find((item) => item.path === '/launches');
+  const media = firstMenu.find((item) => item.path === '/media');
+  const clientMenu: MenuItemInterface[] = [
+    { name: 'Create post', icon: icon('M12 5v14M5 12h14'), path: '/create' },
+    ...(calendar ? [{ ...calendar, name: 'Calendar' }] : []),
+    {
+      name: 'Accounts',
+      icon: icon(
+        'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'
+      ),
+      path: '/channels',
+    },
+    {
+      name: 'Brand',
+      icon: icon(
+        'M12 2l3 6.5 7 1-5 5 1.2 7L12 18l-6.2 3.5L7 14.5l-5-5 7-1z'
+      ),
+      path: '/brand',
+    },
+    ...(media ? [media] : []),
+  ];
+
   return {
-    all: [...firstMenu, ...secondMenu],
-    firstMenu,
+    all: [...clientMenu, ...secondMenu],
+    firstMenu: clientMenu,
     secondMenu,
   };
 };
