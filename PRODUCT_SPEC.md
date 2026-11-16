@@ -202,6 +202,16 @@ what Postiz has, Polotno editor key, mobile app, billing/Stripe.
 
 **AI provider (done):** all new AI calls go through `LlmService` (`libraries/nestjs-libraries/src/llm/`), which speaks OpenAI or Claude. Set `LLM_PROVIDER` (`openai` or `anthropic`; default: whichever key exists), `LLM_MODEL` (default `gpt-4.1` / `claude-sonnet-5-5`) and `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Upstream's own `openai.service.ts` is left untouched so merges stay clean. Newer Claude models reject a forced tool choice, so Claude answers via a tool it is asked (not forced) to call, with JSON-in-text as fallback, and the answer is always re-validated against the zod schema.
 
+**Content variety and quality (done, 2026-11-16, commit dc897640):** built from "Brand Engine Content Variety and Quality Build Spec" after the first posts were judged plain and repetitive.
+- **Post ideas** (`BrandTopic`): the website is crawled (same host, up to 8 pages, robots.txt respected) and turned into 15 to 30 ideas, each with up to 3 facts from the page. Clients pin, mute, delete or add ideas on the Brand page. A refresh keeps the client's own, pinned and muted ideas. Brand also gains `proofPoints` (facts the client vouches for) and `audience`.
+- **Engine** (`brand/engine.service.ts`): every post picks an idea, one of 13 angles (myth vs fact, quick tips, behind the scenes, ...) and a feel (professional, bold, funny, aesthetic, inspiring), each least-used first. One AI call writes 5 hooks under 5 different constraints, picks the best and writes the post for it; hooks that repeat a recent headline or first line are thrown out. The keyword goes in the first line; calls to action rotate (a link on at most 30% of posts); hashtags change from post to post. Numbers and superlatives not found on the website or in the proof points are flagged to the client ("Check before you post"), and a typed idea that claims an offer the website does not show asks for confirmation. Every post is saved (`BrandPost`) so the next one can avoid it.
+- **Network versions**: LinkedIn, Instagram and X/Threads versions are written by a faster model (`LLM_FAST_MODEL`, default `claude-haiku-5-5` / `gpt-4.1-mini`) while the image is designed; publishing writes them if the client posts first. Measured: text 9 to 17 s, versions about 5 s in parallel.
+- **Designs** (`render/design.renderer.ts`): 18 layouts (statement, poster, minimal, big number, checklist, steps, notes, myth vs fact, compare, Q&A chat, tweet card, sticky note, quote, three photo layouts, meme, carousel up to 7 slides), 8 palettes from the brand colours, each contrast-checked, display fonts under the SIL Open Font Licence (Anton, Bebas Neue, Archivo Black, Poppins, DM Serif Display, Abril Fatface, Permanent Marker, Caveat Brush) chosen per feel. Words never break mid-word; a layout that cannot fit its text is skipped. Stories keep the top 13% and bottom 18% clear.
+- **Photos**: up to 3 searches, photos tagged with text, signs or logos dropped, the last 20 posts' photos and photographers avoided, a vision model ranks the rest. The chosen photo is kept when the client changes the words.
+- **Create post**: formats Auto (recommended), Photo, Graphic, Carousel, Short video, Text only; a Feel picker; idea chips (pinned first); the post shows its idea, angle and feel; slide preview for carousels; "Try another design"; edit the words on the image; caption tabs Main / LinkedIn / Instagram / X & Threads; an automatic retry on server errors.
+- **Product name** instead of Postiz on page titles, the menu logo (initials of `NEXT_PUBLIC_PRODUCT_NAME`), the login page and logout. Developer, billing and onboarding-modal texts still say Postiz (hidden from clients).
+- Not done yet from that spec: a "What we have learned" screen and learning from approved posts beyond voice samples, a monthly re-crawl, JavaScript-rendered websites, logo upload and SVG logos, 15 to 30 s videos with captions and an end card, more networks (need app keys).
+
 ---
 
 ## 10. Client experience (direction from Usman, 2026-11-16)
@@ -220,7 +230,7 @@ The product is sold to **business owners who run their own social media, not dev
 4. **Connect your social accounts**: large buttons for Facebook, Instagram, LinkedIn, X, TikTok, YouTube, Pinterest, Threads and the rest, each running the normal connect flow; connected ones show a tick. "Skip for now" is allowed.
 5. **Create a post** (the client's home screen from then on):
    - "What do you want to post about?": topic chips from the brand, or their own words.
-   - Style: photo with headline, quote card, brand card, or text only.
+   - Format: Auto (recommended), photo, graphic, carousel, short video or text only, plus a feel (professional, bold, funny, aesthetic, inspiring).
    - Where: tick the connected channels.
    - **Generate**: our AI writes the caption, hashtags and image headline in the brand's voice and renders the branded image.
    - The client edits if they want, then **Post now**, **Schedule** or **Save as draft**. Regenerate gives a new version.
