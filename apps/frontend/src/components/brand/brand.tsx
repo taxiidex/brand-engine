@@ -252,7 +252,7 @@ export const BrandSettings: FC = () => {
             value={website}
             onChange={(e) => setWebsite(e.target.value)}
             placeholder="https://yourbusiness.com"
-            className="bg-newBgColorInner h-[42px] px-[16px] outline-none border-newTableBorder border rounded-[8px] text-textColor placeholder-textColor flex-1"
+            className="bg-newBgColorInner h-[42px] px-[16px] outline-none border-newTableBorder border rounded-[8px] text-textColor placeholder-textColor placeholder:opacity-50 flex-1"
           />
           <Button onClick={analyze} loading={analyzing} disabled={analyzing}>
             {t('brand_read_website', 'Read my website')}

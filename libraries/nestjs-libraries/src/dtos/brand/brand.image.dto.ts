@@ -57,7 +57,9 @@ export class GenerateBrandImageDto {
   // downloaded.
   @IsOptional()
   @IsUrl({ require_protocol: true, protocols: ['https'] })
-  @Matches(/^https:\/\/(images\.pexels\.com|([a-z0-9-]+\.)?pixabay\.com)\//)
+  @Matches(/^https:\/\/(images\.pexels\.com|([a-z0-9-]+\.)?pixabay\.com)\//, {
+    message: 'photoUrl must be a photo from the stock photo search',
+  })
   @MaxLength(500)
   photoUrl?: string;
 
