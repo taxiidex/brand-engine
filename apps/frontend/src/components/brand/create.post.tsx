@@ -204,7 +204,14 @@ export const CreatePost: FC = () => {
   // A branded video takes longer (a clip is found, downloaded and rendered),
   // so it is made after the text, like the image
   const makeVideo = useCallback(
-    async (text: Generated, videoSize: string, videoUrl?: string) => {
+    async (
+      text: Generated,
+      videoSize: string,
+      videoUrl?: string,
+      // the credit of a clip picked from the search (the server only knows
+      // the credit of clips it picked itself)
+      pickedCredit?: { name: string; link: string } | null
+    ) => {
       setUpdatingImage(true);
       try {
         const res = await fetch('/brand/video', {
@@ -233,7 +240,13 @@ export const CreatePost: FC = () => {
                   url: data.url,
                   size: videoSize,
                   videoUrl: data.videoUrl,
-                  credit: data.videoCredit,
+                  credit:
+                    data.videoCredit ??
+                    pickedCredit ??
+                    (videoUrl && videoUrl === p.video?.videoUrl
+                      ? p.video?.credit
+                      : null) ??
+                    null,
                 },
               }
             : p
@@ -301,7 +314,11 @@ export const CreatePost: FC = () => {
   }, [ownTopic, topic, style, size, selectedChannels, makeImage, makeVideo]);
 
   const rerender = useCallback(
-    async (photoUrl?: string | null) => {
+    async (
+      photoUrl?: string | null,
+      // the credit of a photo picked from the search
+      pickedCredit?: { name: string; link: string } | null
+    ) => {
       if (!post || post.style === 'text') {
         return;
       }
@@ -333,8 +350,15 @@ export const CreatePost: FC = () => {
                 image: {
                   ...p.image,
                   preview: data.preview,
-                  photoUrl: data.photoUrl ?? p.image.photoUrl,
-                  photoCredit: data.photoCredit ?? p.image.photoCredit,
+                  photoUrl: data.photoUrl ?? photoUrl ?? p.image.photoUrl,
+                  // a new photo carries its own credit, the same photo
+                  // keeps the one it had
+                  photoCredit:
+                    data.photoCredit ??
+                    pickedCredit ??
+                    (!photoUrl || photoUrl === p.image.photoUrl
+                      ? p.image.photoCredit
+                      : null),
                 },
               }
             : p
@@ -696,7 +720,12 @@ export const CreatePost: FC = () => {
                             key={c.id}
                             disabled={busy}
                             onClick={() =>
-                              makeVideo(post, post.video?.size || size, c.url)
+                              makeVideo(
+                                post,
+                                post.video?.size || size,
+                                c.url,
+                                c.credit
+                              )
                             }
                             className={clsx(
                               'aspect-square rounded-[6px] overflow-hidden border-2 relative',
@@ -838,7 +867,7 @@ export const CreatePost: FC = () => {
                               type="button"
                               key={p.id}
                               disabled={busy}
-                              onClick={() => rerender(p.url)}
+                              onClick={() => rerender(p.url, p.credit)}
                               className={clsx(
                                 'aspect-square rounded-[6px] overflow-hidden border-2',
                                 post.image?.photoUrl === p.url
