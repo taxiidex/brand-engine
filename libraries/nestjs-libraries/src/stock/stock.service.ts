@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'crypto';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { downloadImage } from '@gitroom/nestjs-libraries/render/remote.image';
 import {
   StockOrientation,
@@ -13,6 +17,9 @@ export type { StockOrientation, StockPhoto, StockVideo };
 
 const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
+// downloaded clips stay on disk this long
+const CLIP_CACHE_MS = 30 * 60 * 1000;
+const CLIP_DIR = join(tmpdir(), 'brand-clips');
 // Pixabay's terms ask for 24 hours, and stock searches rarely change
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 300;
@@ -125,12 +132,37 @@ export class StockService {
   }
 
   // Only clips that live on a provider's own host are ever downloaded
-  downloadVideo(url: string) {
-    return downloadImage(
+  async downloadVideo(url: string) {
+    const file = join(CLIP_DIR, `${createHash('sha1').update(url).digest('hex')}.mp4`);
+    try {
+      const info = await stat(file);
+      if (Date.now() - info.mtimeMs < CLIP_CACHE_MS) {
+        return await readFile(file);
+      }
+    } catch (err) {
+      // not downloaded yet
+    }
+    const clip = await downloadImage(
       url,
       MAX_VIDEO_BYTES,
       this._providers.flatMap((p) => p.hosts)
     );
+    if (clip) {
+      try {
+        await mkdir(CLIP_DIR, { recursive: true });
+        await writeFile(file, clip);
+        // forget clips older than the cache time
+        for (const name of await readdir(CLIP_DIR)) {
+          const old = join(CLIP_DIR, name);
+          if (Date.now() - (await stat(old)).mtimeMs > CLIP_CACHE_MS) {
+            await rm(old, { force: true });
+          }
+        }
+      } catch (err) {
+        // the cache is only a speed-up
+      }
+    }
+    return clip;
   }
 
   // Only photos that live on a provider's own image host are ever downloaded

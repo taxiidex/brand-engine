@@ -364,7 +364,7 @@ const LAYOUT_SLOTS: Record<string, string> = {
   carousel:
     'kicker, items (4 to 6 slides; each "Short title: one-line detail"), subtext (the last slide: an invitation to follow or save)',
   video:
-    'kicker (1 to 3 words), items (exactly 3 scene lines that carry the story on after the headline, each at most 8 words, with the 1 or 2 key words in *asterisks*), subtext (the closing line on the end card, at most 7 words)',
+    'kicker (1 to 3 words), items (exactly 3 scene lines that carry the story on after the headline, each at most 8 words, with the 1 or 2 key words in *asterisks*; each line says something new, never the headline again), subtext (the closing line on the end card, at most 7 words: a last thought or promise, NOT the call to action, because the button under it already says that)',
 };
 
 // the formats (COMPOSE_STYLES in the post DTO) that get a designed image
@@ -1392,12 +1392,14 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
         others,
         avoid
       );
-      for (const video of picked) {
+      // the best ones at the same time, then one by one for any that failed
+      const fresh = picked.filter((v) => !clips.some((c) => c.url === v.url));
+      const first = fresh.slice(0, needed - clips.length);
+      const buffers = await Promise.all(first.map((v) => download(v.url)));
+      first.forEach((video, i) => buffers[i] && clips.push({ buffer: buffers[i]!, video, url: video.url }));
+      for (const video of fresh.slice(first.length)) {
         if (clips.length >= needed) {
           break;
-        }
-        if (clips.some((c) => c.url === video.url)) {
-          continue;
         }
         const buffer = await download(video.url);
         if (buffer) {

@@ -52,6 +52,9 @@ export class CopilotController {
       process.env.OPENAI_API_KEY === ''
     ) {
       Logger.warn('OpenAI API key not set, chat functionality will not work');
+      // answer straight away; without a response the request hangs until
+      // the proxy gives up a minute later
+      res.status(503).json({ error: 'AI chat is not configured' });
       return;
     }
 
