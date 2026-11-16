@@ -199,3 +199,5 @@ what Postiz has, Polotno editor key, mobile app, billing/Stripe.
 - Logos and photos are decoded only if they are PNG, JPEG or WebP. SVG is refused because the renderer would resolve whatever files or URLs it points at.
 - Fonts in the image: Inter, DejaVu, Noto core (many scripts) and Noto Color Emoji. **CJK is not included** (about 100 MB); add `fonts-noto-cjk` if Chinese, Japanese or Korean customers appear.
 - Needs `PIXABAY_API_KEY` and/or `PEXELS_API_KEY`. Without a key the quote and brand cards still work.
+
+**AI provider (done):** all new AI calls go through `LlmService` (`libraries/nestjs-libraries/src/llm/`), which speaks OpenAI or Claude. Set `LLM_PROVIDER` (`openai` or `anthropic`; default: whichever key exists), `LLM_MODEL` (default `gpt-4.1` / `claude-sonnet-5-5`) and `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Upstream's own `openai.service.ts` is left untouched so merges stay clean. Newer Claude models reject a forced tool choice, so Claude answers via a tool it is asked (not forced) to call, with JSON-in-text as fallback, and the answer is always re-validated against the zod schema.
