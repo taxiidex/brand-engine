@@ -37,6 +37,11 @@ const STYLES = [
     label: 'Brand card',
     hint: 'A clean graphic in your colours',
   },
+  {
+    value: 'video',
+    label: 'Short video',
+    hint: 'A moving clip with your headline, for Reels and Stories',
+  },
   { value: 'text', label: 'Text only', hint: 'No image, just the words' },
 ];
 
@@ -80,6 +85,12 @@ interface Generated {
     size: string;
     photoUrl: string | null;
     photoCredit: { name: string; link: string } | null;
+  };
+  video?: null | {
+    url: string;
+    size: string;
+    videoUrl: string;
+    credit: { name: string; link: string } | null;
   };
 }
 
@@ -190,6 +201,69 @@ export const CreatePost: FC = () => {
     [brand]
   );
 
+  // A branded video takes longer (a clip is found, downloaded and rendered),
+  // so it is made after the text, like the image
+  const makeVideo = useCallback(
+    async (text: Generated, videoSize: string, videoUrl?: string) => {
+      setUpdatingImage(true);
+      try {
+        const res = await fetch('/brand/video', {
+          method: 'POST',
+          body: JSON.stringify({
+            headline: text.headline || brand?.businessName || ' ',
+            subtext: text.subtext || undefined,
+            size: videoSize,
+            videoQuery: text.photoQuery || undefined,
+            videoUrl: videoUrl || undefined,
+          }),
+        });
+        if (!res.ok) {
+          toaster.show(
+            await errorMessage(res, 'We could not make the video.'),
+            'warning'
+          );
+          return;
+        }
+        const data = await res.json();
+        setPost((p) =>
+          p
+            ? {
+                ...p,
+                video: {
+                  url: data.url,
+                  size: videoSize,
+                  videoUrl: data.videoUrl,
+                  credit: data.videoCredit,
+                },
+              }
+            : p
+        );
+      } finally {
+        setUpdatingImage(false);
+      }
+    },
+    [brand]
+  );
+
+  const [clips, setClips] = useState<any[] | null>(null);
+  const searchClips = useCallback(async () => {
+    if (photoQuery.trim().length < 2) {
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `/brand/stock-videos?query=${encodeURIComponent(
+          photoQuery.trim()
+        )}&size=${post?.video?.size || size}`
+      );
+      const data = res.ok ? await res.json() : { videos: [] };
+      setClips(data.videos || []);
+    } finally {
+      setSearching(false);
+    }
+  }, [photoQuery, post, size]);
+
   const generate = useCallback(async () => {
     setGenerating(true);
     setPublished(null);
@@ -213,15 +287,18 @@ export const CreatePost: FC = () => {
         return;
       }
       const data: Generated = await res.json();
-      setPost({ ...data, image: null });
+      setPost({ ...data, image: null, video: null });
       setPhotoQuery(data.photoQuery);
-      if (style !== 'text') {
+      setClips(null);
+      if (style === 'video') {
+        makeVideo(data, size);
+      } else if (style !== 'text') {
         makeImage(data, size);
       }
     } finally {
       setGenerating(false);
     }
-  }, [ownTopic, topic, style, size, selectedChannels, makeImage]);
+  }, [ownTopic, topic, style, size, selectedChannels, makeImage, makeVideo]);
 
   const rerender = useCallback(
     async (photoUrl?: string | null) => {
@@ -312,6 +389,7 @@ export const CreatePost: FC = () => {
             headline: post.headline || undefined,
             subtext: post.subtext || undefined,
             photoUrl: post.image?.photoUrl || undefined,
+            videoPath: post.style === 'video' ? post.video?.url : undefined,
           }),
         });
         if (!res.ok) {
@@ -379,7 +457,13 @@ export const CreatePost: FC = () => {
                 <button
                   type="button"
                   key={s.value}
-                  onClick={() => setStyle(s.value)}
+                  onClick={() => {
+                    setStyle(s.value);
+                    // videos are mostly watched as Reels and Stories
+                    if (s.value === 'video' && size === 'feed') {
+                      setSize('story');
+                    }
+                  }}
                   className={clsx(
                     'text-start p-[12px] rounded-[10px] border transition-colors',
                     style === s.value
@@ -393,7 +477,7 @@ export const CreatePost: FC = () => {
               ))}
             </div>
             {style !== 'text' && (
-              <Field label="Image size">
+              <Field label={style === 'video' ? 'Video size' : 'Image size'}>
                 <ChoiceChips options={SIZES} value={size} onChange={setSize} />
               </Field>
             )}
@@ -480,7 +564,163 @@ export const CreatePost: FC = () => {
                   : 'grid-cols-1'
               )}
             >
-              {post.style !== 'text' && !post.image && (
+              {post.style === 'video' && (
+                <div className="flex flex-col gap-[12px]">
+                  {post.video ? (
+                    <video
+                      key={post.video.url}
+                      src={post.video.url}
+                      controls={true}
+                      autoPlay={true}
+                      muted={true}
+                      loop={true}
+                      playsInline={true}
+                      className={clsx(
+                        'w-full max-h-[620px] rounded-[10px] border border-newTableBorder bg-black',
+                        updatingImage && 'opacity-50'
+                      )}
+                    />
+                  ) : (
+                    <div className="aspect-[9/16] max-h-[520px] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
+                      {updatingImage ? (
+                        <>
+                          <div className="text-[15px] font-[600] text-textColor">
+                            Making your video...
+                          </div>
+                          <div className="text-[13px]">
+                            Finding a clip and putting your headline, logo and
+                            button on it. This takes about 30 seconds.
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[14px]">
+                            The video is not ready.
+                          </div>
+                          <Button
+                            secondary={true}
+                            onClick={() => makeVideo(post, size)}
+                            className="rounded-[8px]"
+                          >
+                            Try again
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {post.video?.credit && (
+                    <div className="text-[12px] text-textItemBlur">
+                      Video by{' '}
+                      <a
+                        href={post.video.credit.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        {post.video.credit.name}
+                      </a>
+                    </div>
+                  )}
+                  <Field label="Headline on the video">
+                    <input
+                      value={post.headline}
+                      onChange={(e) => update('headline', e.target.value)}
+                      maxLength={220}
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Line under the headline">
+                    <input
+                      value={post.subtext}
+                      onChange={(e) => update('subtext', e.target.value)}
+                      maxLength={200}
+                      className={inputClass}
+                    />
+                  </Field>
+                  <div className="flex gap-[8px] flex-wrap">
+                    <Button
+                      secondary={true}
+                      onClick={() =>
+                        makeVideo(
+                          post,
+                          post.video?.size || size,
+                          post.video?.videoUrl
+                        )
+                      }
+                      loading={updatingImage}
+                      disabled={busy}
+                      className="rounded-[8px]"
+                    >
+                      Update video
+                    </Button>
+                    {post.video && (
+                      <a
+                        href={post.video.url}
+                        download="post-video.mp4"
+                        className="h-[40px] px-[16px] rounded-[8px] border border-newTableBorder flex items-center text-[14px] hover:border-forth"
+                      >
+                        Download
+                      </a>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-[8px]">
+                    <div className="text-[14px] font-[500]">Change the clip</div>
+                    <div className="flex gap-[8px]">
+                      <input
+                        value={photoQuery}
+                        onChange={(e) => setPhotoQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && searchClips()}
+                        placeholder="e.g. city traffic at night"
+                        className={inputClass}
+                      />
+                      <Button
+                        secondary={true}
+                        onClick={searchClips}
+                        loading={searching}
+                        disabled={searching}
+                        className="rounded-[8px] !h-[44px]"
+                      >
+                        Search
+                      </Button>
+                    </div>
+                    {clips && !clips.length && (
+                      <div className="text-[13px] text-textItemBlur">
+                        No clips found, try other words.
+                      </div>
+                    )}
+                    {!!clips?.length && (
+                      <div className="grid grid-cols-4 gap-[6px]">
+                        {clips.map((c) => (
+                          <button
+                            type="button"
+                            key={c.id}
+                            disabled={busy}
+                            onClick={() =>
+                              makeVideo(post, post.video?.size || size, c.url)
+                            }
+                            className={clsx(
+                              'aspect-square rounded-[6px] overflow-hidden border-2 relative',
+                              post.video?.videoUrl === c.url
+                                ? 'border-forth'
+                                : 'border-transparent hover:border-newTableBorder'
+                            )}
+                          >
+                            <img
+                              src={c.thumb}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                            <span className="absolute bottom-[2px] end-[4px] text-[10px] text-white bg-black/60 px-[4px] rounded">
+                              {c.duration}s
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {post.style !== 'text' && post.style !== 'video' && !post.image && (
                 <div className="aspect-[4/5] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
                   {updatingImage ? (
                     <>

@@ -17,11 +17,35 @@ import {
   GeneratePostDto,
   PublishPostDto,
 } from '@gitroom/nestjs-libraries/dtos/brand/brand.post.dto';
+import {
+  GenerateBrandVideoDto,
+  VideoSearchDto,
+} from '@gitroom/nestjs-libraries/dtos/brand/brand.video.dto';
+import { VideoSize } from '@gitroom/nestjs-libraries/render/video.renderer';
 
 @ApiTags('Brand')
 @Controller('/brand')
 export class BrandController {
   constructor(private _brandService: BrandService) {}
+
+  @Get('/stock-videos')
+  @Throttle({ default: { limit: 60, ttl: 3600000 } })
+  async searchVideos(@Query() query: VideoSearchDto) {
+    return this._brandService.searchVideos(
+      query.query,
+      (query.size as VideoSize) || 'story'
+    );
+  }
+
+  // Renders a branded video; heavy, so it is limited more than the rest
+  @Post('/video')
+  @Throttle({ default: { limit: 30, ttl: 3600000 } })
+  async generateVideo(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: GenerateBrandVideoDto
+  ) {
+    return this._brandService.generateVideo(org.id, body);
+  }
 
   @Get('/')
   async getBrand(@GetOrgFromRequest() org: Organization) {

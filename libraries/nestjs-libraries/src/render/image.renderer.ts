@@ -161,6 +161,60 @@ export class ImageRenderer {
         };
   }
 
+  // A transparent layer with the headline, logo and call to action, which the
+  // video renderer lays over a moving clip
+  async renderOverlay(input: {
+    width: number;
+    height: number;
+    hook: string;
+    subtext?: string;
+    brand: RenderBrand;
+    logo?: Buffer;
+  }): Promise<Buffer> {
+    const { width, height } = input;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    const accent = validHex(input.brand.accentColor, '#FF5733');
+    const scene: Scene = {
+      ctx,
+      w: width,
+      h: height,
+      u: Math.sqrt(width * height) / 1080,
+      family: `"${(input.brand.fontFamily || 'Inter').replace(
+        /["\\]/g,
+        ''
+      )}", Inter, "DejaVu Sans", sans-serif`,
+      primary: validHex(input.brand.primaryColor, FALLBACK_COLOR),
+      accent,
+      brand: input.brand,
+      logo: await this.decode(input.logo),
+      hook: input.hook,
+      subtext: input.subtext?.trim() || '',
+      // tall formats keep clear of the app's own buttons at the bottom
+      story: height / width > 1.5,
+    };
+
+    // dark towards the bottom so the text reads on any clip
+    const shade = ctx.createLinearGradient(0, height * 0.35, 0, height);
+    shade.addColorStop(0, 'rgba(0,0,0,0)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.85)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, height * 0.35, width, height * 0.65);
+
+    const margin = 80 * scene.u;
+    const footerTop = this.footer(scene, margin, '#000000', '#FFFFFF');
+    this.textBlock(scene, {
+      left: margin,
+      width: width - 2 * margin,
+      bottom: footerTop - 40 * scene.u,
+      hookMax: 96 * scene.u,
+      hookHeight: height * 0.3,
+      color: '#FFFFFF',
+      accent: this.visible(accent, '#000000', '#FFFFFF'),
+    });
+    return canvas.toBuffer('image/png');
+  }
+
   private async decode(buffer?: Buffer): Promise<Image | null> {
     if (!buffer || !isRaster(buffer)) {
       return null;

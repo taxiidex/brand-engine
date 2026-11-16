@@ -4,13 +4,15 @@ import {
   StockOrientation,
   StockPhoto,
   StockProvider,
+  StockVideo,
 } from '@gitroom/nestjs-libraries/stock/stock.provider';
 import { PexelsProvider } from '@gitroom/nestjs-libraries/stock/pexels.provider';
 import { PixabayProvider } from '@gitroom/nestjs-libraries/stock/pixabay.provider';
 
-export type { StockOrientation, StockPhoto };
+export type { StockOrientation, StockPhoto, StockVideo };
 
 const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
 // Pixabay's terms ask for 24 hours, and stock searches rarely change
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 300;
@@ -31,6 +33,10 @@ export class StockService {
     { at: number; photos: StockPhoto[] }
   >();
   private readonly _photos = new Map<string, { at: number; image: Buffer }>();
+  private readonly _videoCache = new Map<
+    string,
+    { at: number; videos: StockVideo[] }
+  >();
 
   isConfigured() {
     return this._providers.some((p) => p.isConfigured());
@@ -75,6 +81,56 @@ export class StockService {
       this._cache.set(cacheKey, { at: Date.now(), photos: merged });
     }
     return merged;
+  }
+
+  async searchVideos(
+    query: string,
+    orientation: StockOrientation,
+    perPage = 8
+  ): Promise<StockVideo[]> {
+    const term = query.replace(/\s+/g, ' ').trim();
+    const active = this._providers.filter((p) => p.isConfigured());
+    if (!term || !active.length) {
+      return [];
+    }
+
+    const cacheKey = `${active
+      .map((p) => p.label)
+      .join('+')}|video|${orientation}|${perPage}|${term.toLowerCase()}`;
+    const cached = this._videoCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < CACHE_MS) {
+      return cached.videos;
+    }
+
+    const results = await Promise.all(
+      active.map((p) => p.searchVideos(term, orientation, perPage))
+    );
+    const videos: StockVideo[] = [];
+    for (let i = 0; videos.length < perPage; i++) {
+      const round = results.map((r) => r[i]).filter(Boolean);
+      if (!round.length) {
+        break;
+      }
+      videos.push(...round);
+    }
+    const merged = videos.slice(0, perPage);
+
+    if (merged.length) {
+      if (this._videoCache.size >= CACHE_MAX) {
+        this._videoCache.delete(this._videoCache.keys().next().value!);
+      }
+      this._videoCache.set(cacheKey, { at: Date.now(), videos: merged });
+    }
+    return merged;
+  }
+
+  // Only clips that live on a provider's own host are ever downloaded
+  downloadVideo(url: string) {
+    return downloadImage(
+      url,
+      MAX_VIDEO_BYTES,
+      this._providers.flatMap((p) => p.hosts)
+    );
   }
 
   // Only photos that live on a provider's own image host are ever downloaded

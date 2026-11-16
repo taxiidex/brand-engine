@@ -17,7 +17,7 @@ import {
   IMAGE_TEMPLATES,
 } from '@gitroom/nestjs-libraries/render/image.renderer';
 
-export const POST_STYLES = [...IMAGE_TEMPLATES, 'text'] as const;
+export const POST_STYLES = [...IMAGE_TEMPLATES, 'video', 'text'] as const;
 export type PostStyle = (typeof POST_STYLES)[number];
 
 export const STOCK_PHOTO_URL =
@@ -119,4 +119,10 @@ export class PublishPostDto {
   })
   @MaxLength(500)
   photoUrl?: string;
+
+  // for a video post: the address of the rendered video (from /brand/video)
+  @IsOptional()
+  @IsUrl({ require_protocol: true, protocols: ['https', 'http'] })
+  @MaxLength(600)
+  videoPath?: string;
 }
