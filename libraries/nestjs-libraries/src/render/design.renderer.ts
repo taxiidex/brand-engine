@@ -1681,9 +1681,18 @@ export class DesignRenderer {
     // "Title: detail" becomes a bold title and a lighter line
     const [title, ...rest] = item.split(/:\s+/);
     const detail = rest.join(': ');
-    const head = this.headline(s, title, { x: m, y: s.top + 270 * u, w: w - 2 * m, h: detail ? (footerTop - s.top - 300 * u) * 0.5 : footerTop - s.top - 330 * u }, { maxSize: 96 * u });
+    // the title sits just above the middle of the free space and the detail
+    // below it, large, so the slide does not end in an empty half
+    const top = s.top + 250 * u;
+    const room = footerTop - 50 * u - top;
+    const head = this.headline(
+      s,
+      title,
+      { x: m, y: top, w: w - 2 * m, h: detail ? room * 0.5 : room },
+      { maxSize: 128 * u, vertical: detail ? 'bottom' : 'center' }
+    );
     if (detail) {
-      this.body(s, detail.charAt(0).toLocaleUpperCase() + detail.slice(1), { x: m, y: head.bottom + 34 * u, w: w - 2 * m, h: footerTop - head.bottom - 70 * u }, { size: 50 * u });
+      this.body(s, detail.charAt(0).toLocaleUpperCase() + detail.slice(1), { x: m, y: head.bottom + 40 * u, w: w - 2 * m, h: footerTop - head.bottom - 90 * u }, { size: 60 * u });
     }
   }
 
