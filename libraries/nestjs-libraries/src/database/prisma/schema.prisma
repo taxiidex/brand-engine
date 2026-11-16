@@ -23,6 +23,8 @@ model Organization {
   shortlink           ShortLinkPreference  @default(ASK)
   autoPost            AutoPost[]
   brandProfile        BrandProfile?
+  brandTopics         BrandTopic[]
+  brandPosts          BrandPost[]
   Comments            Comments[]
   credits             Credits[]
   clippings           Clipping[]
@@ -718,9 +720,70 @@ model BrandProfile {
   logoUrl        String?
   ctaText        String?
   ctaUrl         String?
+  // facts the client vouches for (numbers, results, awards); the only
+  // source, with the website, for any number or claim in a post
+  proofPoints    String[]     @default([])
+  audience       String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+// What a brand can post about: read from its website, its keywords, or added
+// by the client. Facts are the claims the website makes about the topic.
+model BrandTopic {
+  id             String       @id @default(uuid())
+  organizationId String
+  title          String
+  kind           String
+  sourceUrl      String?
+  facts          String[]     @default([])
+  pinned         Boolean      @default(false)
+  muted          Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+// Every generated post, so the next one can avoid repeating the last ones
+// (topic, angle, headline, template, palette, photo, hashtags) and the engine
+// can learn from what the client keeps.
+model BrandPost {
+  id             String       @id @default(uuid())
+  organizationId String
+  topic          String
+  topicId        String?
+  angle          String
+  vibe           String
+  headline       String
+  firstLine      String
+  caption        String
+  ctaType        String
+  keyword        String?
+  hashtags       String[]     @default([])
+  templateId     String?
+  paletteId      String?
+  photoId        String?
+  photoAuthor    String?
+  photoUrl       String?
+  status         String       @default("generated")
+  publishedCaption String?
+  size           String?
+  // what the layout is filled with, the platform versions of the caption,
+  // the photo searches, the rendered images and the checks to show the client
+  slots          Json?
+  captions       Json?
+  photoQueries   String[]     @default([])
+  imagePaths     String[]     @default([])
+  altText        String?
+  flags          String[]     @default([])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
 }
 
 model Sets {

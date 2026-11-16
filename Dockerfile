@@ -31,6 +31,11 @@ WORKDIR /app
 COPY . /app
 COPY var/docker/nginx.conf /etc/nginx/nginx.conf
 
+# display fonts used by the post templates (open licences, see the licenses folder)
+RUN mkdir -p /usr/share/fonts/truetype/brand-engine \
+ && cp /app/libraries/nestjs-libraries/src/render/fonts/*.ttf /usr/share/fonts/truetype/brand-engine/ \
+ && fc-cache -f
+
 RUN pnpm install
 RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm run build
 

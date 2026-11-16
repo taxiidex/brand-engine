@@ -13,6 +13,10 @@ interface ObjectRequest<T extends z.ZodTypeAny> {
   schema: T;
   name: string;
   maxTokens: number;
+  // images (public https urls) the model looks at together with the text
+  images?: string[];
+  // a different model for this request, e.g. a faster one for ranking
+  model?: string;
 }
 
 // One place that decides which AI answers: OpenAI or Claude. Set with
@@ -43,6 +47,14 @@ export class LlmService {
       : false;
   }
 
+  // a quicker, cheaper model for small jobs (ranking photos, rewriting text)
+  fastModel() {
+    if (process.env.LLM_FAST_MODEL) {
+      return process.env.LLM_FAST_MODEL;
+    }
+    return this.provider() === 'anthropic' ? 'claude-haiku-5-5' : 'gpt-4.1-mini';
+  }
+
   // Asks for an answer that matches the schema. Gives back undefined when no
   // AI is configured or the answer did not match; throws when the provider
   // itself fails, so the caller can tell the user why.
@@ -61,11 +73,22 @@ export class LlmService {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const result = await client.chat.completions.parse(
       {
-        model: process.env.LLM_MODEL || 'gpt-4.1',
+        model: request.model || process.env.LLM_MODEL || 'gpt-4.1',
         max_completion_tokens: request.maxTokens,
         messages: [
           { role: 'system', content: request.system },
-          { role: 'user', content: request.user },
+          {
+            role: 'user',
+            content: request.images?.length
+              ? [
+                  { type: 'text' as const, text: request.user },
+                  ...request.images.map((url) => ({
+                    type: 'image_url' as const,
+                    image_url: { url },
+                  })),
+                ]
+              : request.user,
+          },
         ],
         response_format: zodResponseFormat(request.schema, request.name),
       },
@@ -89,12 +112,25 @@ export class LlmService {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: process.env.LLM_MODEL || 'claude-sonnet-5-5',
+        model: request.model || process.env.LLM_MODEL || 'claude-sonnet-5-5',
         max_tokens: request.maxTokens,
         system: `${request.system}
 
 Answer only by calling the ${request.name} tool.`,
-        messages: [{ role: 'user', content: request.user }],
+        messages: [
+          {
+            role: 'user',
+            content: request.images?.length
+              ? [
+                  ...request.images.map((url) => ({
+                    type: 'image',
+                    source: { type: 'url', url },
+                  })),
+                  { type: 'text', text: request.user },
+                ]
+              : request.user,
+          },
+        ],
         tools: [
           {
             name: request.name,
@@ -114,7 +150,13 @@ Answer only by calling the ${request.name} tool.`,
 
     const data = (await res.json()) as {
       content?: { type: string; input?: unknown; text?: string }[];
+      stop_reason?: string;
     };
+    if (data.stop_reason === 'max_tokens') {
+      this._logger.warn(
+        `Claude answer for ${request.name} was cut off at ${request.maxTokens} tokens`
+      );
+    }
     const input =
       data.content?.find((b) => b.type === 'tool_use')?.input ??
       this.jsonFromText(data.content?.find((b) => b.type === 'text')?.text);

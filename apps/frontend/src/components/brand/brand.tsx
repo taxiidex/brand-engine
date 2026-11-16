@@ -14,6 +14,7 @@ import {
   inputClass,
   textareaClass,
 } from '@gitroom/frontend/components/brand/ui';
+import { TopicsManager } from '@gitroom/frontend/components/brand/topics';
 
 export interface Brand {
   id?: string;
@@ -32,6 +33,8 @@ export interface Brand {
   logoUrl: string;
   ctaText: string;
   ctaUrl: string;
+  proofPoints: string[];
+  audience: string;
 }
 
 const EMPTY: Brand = {
@@ -50,6 +53,8 @@ const EMPTY: Brand = {
   logoUrl: '',
   ctaText: '',
   ctaUrl: '',
+  proofPoints: [],
+  audience: '',
 };
 
 const TONES = [
@@ -133,6 +138,8 @@ export const BrandForm: FC<{
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [more, setMore] = useState(false);
+  // proof points the website suggested, not added yet
+  const [suggested, setSuggested] = useState<string[]>([]);
   const autoRan = useRef(false);
 
   const set = <K extends keyof Brand>(key: K, value: Brand[K]) =>
@@ -219,6 +226,7 @@ export const BrandForm: FC<{
           logoUrl: rest.logoUrl || undefined,
           ctaText: rest.ctaText || undefined,
           ctaUrl: rest.ctaUrl || undefined,
+          audience: rest.audience || undefined,
         }),
       });
       if (!res.ok) {
@@ -283,7 +291,7 @@ export const BrandForm: FC<{
             <input
               value={brand.businessName}
               onChange={(e) => set('businessName', e.target.value)}
-              placeholder="Green Cab Co"
+              placeholder="e.g. Sunrise Bakery"
               className={inputClass}
             />
           </Field>
@@ -291,7 +299,7 @@ export const BrandForm: FC<{
             <input
               value={brand.niche}
               onChange={(e) => set('niche', e.target.value)}
-              placeholder="Airport taxis in Dublin"
+              placeholder="e.g. Fresh bread and cakes in Leeds"
               className={inputClass}
             />
           </Field>
@@ -304,6 +312,18 @@ export const BrandForm: FC<{
             value={brand.description}
             onChange={(e) => set('description', e.target.value)}
             className={textareaClass}
+          />
+        </Field>
+        <Field
+          label="Who your posts speak to"
+          hint="Your customers, in a few words."
+        >
+          <input
+            value={brand.audience}
+            onChange={(e) => set('audience', e.target.value)}
+            placeholder="e.g. busy parents who want good bread without the queue"
+            maxLength={300}
+            className={inputClass}
           />
         </Field>
         <Field label="Website">
@@ -344,8 +364,12 @@ export const BrandForm: FC<{
       </Card>
 
       <Card
-        title="What you post about"
-        hint="Topics your customers care about. Each new post picks one of these unless you choose your own."
+        title={data ? 'Main themes' : 'What you post about'}
+        hint={
+          data
+            ? 'A few broad themes your customers care about. The specific ideas for each post are under Post ideas below.'
+            : 'Topics your customers care about. Each new post picks one of these unless you choose your own.'
+        }
       >
         <TagInput
           values={brand.targetTopics}
@@ -354,6 +378,56 @@ export const BrandForm: FC<{
           max={20}
         />
       </Card>
+
+      <Card
+        title="Proof you can stand behind"
+        hint="Facts your posts may use: years in business, number of customers, awards, review scores. We never make these up, so a post can only use what is here or on your website."
+      >
+        <TagInput
+          values={brand.proofPoints}
+          onChange={(v) => set('proofPoints', v)}
+          placeholder="e.g. Baking since 1998, and press Enter"
+          max={12}
+        />
+        {!!suggested.length && (
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[13px] text-textItemBlur">
+              Found on your website. Add the ones that are true:
+            </div>
+            <div className="flex flex-wrap gap-[6px]">
+              {suggested.map((p) => (
+                <button
+                  type="button"
+                  key={p}
+                  onClick={() => {
+                    if (brand.proofPoints.length < 12) {
+                      set('proofPoints', [...brand.proofPoints, p]);
+                    }
+                    setSuggested((list) => list.filter((x) => x !== p));
+                  }}
+                  className="text-start text-[13px] px-[10px] py-[6px] rounded-[8px] border border-dashed border-newTableBorder hover:border-forth"
+                >
+                  + {p}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {!!data && (
+        <TopicsManager
+          hasWebsite={!!data.websiteUrl}
+          onSuggestedProof={(points) =>
+            setSuggested(
+              points.filter(
+                (p) =>
+                  !brand.proofPoints.some((x) => x.toLowerCase() === p.toLowerCase())
+              )
+            )
+          }
+        />
+      )}
 
       <Card title="Your look" hint="Used on every image we make for you.">
         <div className="grid grid-cols-[auto,1fr] gap-[20px] items-start mobile:grid-cols-1">

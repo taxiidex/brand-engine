@@ -31,6 +31,8 @@ export class BrandRepository {
       logoUrl: body.logoUrl || null,
       ctaText: body.ctaText || null,
       ctaUrl: body.ctaUrl || null,
+      proofPoints: body.proofPoints || [],
+      audience: body.audience?.trim() || null,
     };
 
     return this._brandProfile.model.brandProfile.upsert({

@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '@gitroom/frontend/components/brand/product';
 import { internalFetch } from '@gitroom/helpers/utils/internal.fetch';
 import { sanitizePostContent } from '@gitroom/helpers/utils/sanitize.post.content';
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,7 @@ import { CreationMethodBadge } from '@gitroom/frontend/components/launches/creat
 
 dayjs.extend(utc);
 export const metadata: Metadata = {
-  title: `${isGeneralServerSide() ? 'Postiz' : 'Gitroom'} Preview`,
+  title: `${PRODUCT_NAME} Preview`,
   description: '',
 };
 export default async function Auth(

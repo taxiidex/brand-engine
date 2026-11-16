@@ -1,10 +1,11 @@
 export const dynamic = 'force-dynamic';
+import { PRODUCT_NAME } from '@gitroom/frontend/components/brand/product';
 import { AdminErrorsComponent } from '@gitroom/frontend/components/admin/admin-errors.component';
 import { Metadata } from 'next';
 import { isGeneralServerSide } from '@gitroom/helpers/utils/is.general.server.side';
 
 export const metadata: Metadata = {
-  title: `${isGeneralServerSide() ? 'Postiz' : 'Gitroom'} Admin Errors`,
+  title: `${PRODUCT_NAME} Admin Errors`,
   description: '',
 };
 

@@ -8,6 +8,10 @@ export interface StockPhoto {
   width: number;
   height: number;
   credit: { name: string; link: string };
+  // words describing the photo, used to drop text, signs and logos
+  tags?: string;
+  // a small public preview, used when ranking photos
+  preview?: string;
 }
 
 export interface StockVideo {

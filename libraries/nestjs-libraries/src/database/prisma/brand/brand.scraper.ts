@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { getSsrfSafeDispatcher } from '@gitroom/nestjs-libraries/dtos/webhooks/ssrf.safe.dispatcher';
 
+export interface CrawledPage {
+  url: string;
+  title: string;
+  headings: string[];
+  text: string;
+}
+
 export interface ScrapedSite {
   url: string;
   title: string;
@@ -228,6 +235,131 @@ export class BrandScraper {
     } catch (err) {
       return undefined;
     }
+  }
+
+  // Reads the home page and up to `maxPages - 1` pages of the same site that
+  // most likely describe the business (services, features, pricing, FAQ,
+  // about, blog), respecting robots.txt. Used to build the topic pool.
+  async crawl(startUrl: string, maxPages = 8): Promise<CrawledPage[]> {
+    const first = await this.fetchText(startUrl, MAX_HTML_BYTES, 'text/html');
+    if (!first) {
+      return [];
+    }
+    const base = new URL(first.url);
+    const disallowed = await this.robotsDisallow(base);
+    const allowed = (u: URL) => !disallowed.some((d) => d && u.pathname.startsWith(d));
+
+    const home = this.readPage(first.text, first.url);
+    const pages: CrawledPage[] = [home.page];
+    const wanted =
+      /(service|product|feature|pricing|price|plan|faq|question|about|solution|how-it|work|blog|news|case|industr|use-case|integration|menu|offer|team|story)/i;
+    const seen = new Set<string>([base.origin + base.pathname]);
+    const candidates = home.links
+      .map((l) => {
+        try {
+          const u = new URL(l.href, first.url);
+          u.hash = '';
+          return { u, text: l.text };
+        } catch (err) {
+          return null;
+        }
+      })
+      .filter(
+        (c): c is { u: URL; text: string } =>
+          !!c &&
+          c.u.hostname === base.hostname &&
+          /^https?:$/.test(c.u.protocol) &&
+          !/\.(pdf|jpe?g|png|gif|webp|svg|zip|mp4|mp3|docx?|xlsx?)$/i.test(c.u.pathname) &&
+          allowed(c.u)
+      )
+      .filter((c) => {
+        const key = c.u.origin + c.u.pathname;
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .map((c) => ({
+        ...c,
+        score:
+          (wanted.test(c.u.pathname) ? 2 : 0) +
+          (wanted.test(c.text) ? 1 : 0) -
+          c.u.pathname.split('/').filter(Boolean).length * 0.2,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(0, maxPages - 1));
+
+    // a few at a time, to stay polite to the client's server
+    for (let i = 0; i < candidates.length; i += 3) {
+      const batch = await Promise.all(
+        candidates
+          .slice(i, i + 3)
+          .map((c) => this.fetchText(c.u.toString(), MAX_HTML_BYTES, 'text/html'))
+      );
+      for (const page of batch) {
+        if (page) {
+          pages.push(this.readPage(page.text, page.url).page);
+        }
+      }
+    }
+    return pages;
+  }
+
+  private readPage(html: string, url: string) {
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('jsdomError', () => undefined);
+    const dom = new JSDOM(html, { url, virtualConsole });
+    const doc = dom.window.document;
+    const links = Array.from(doc.querySelectorAll('a[href]')).map((a) => ({
+      href: a.getAttribute('href') || '',
+      text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    }));
+    const headings = Array.from(doc.querySelectorAll('h1, h2, h3'))
+      .map((h) => (h.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter((h, i, all) => !!h && all.indexOf(h) === i)
+      .map((h) => h.slice(0, 140))
+      .slice(0, 25);
+    doc
+      .querySelectorAll('script, style, noscript, svg, iframe, form, nav, footer')
+      .forEach((el) => el.remove());
+    doc.body
+      ?.querySelectorAll('*')
+      .forEach((el) => el.append(doc.createTextNode(' ')));
+    const text = (doc.body?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 2500);
+    return {
+      page: {
+        url,
+        title: (doc.title || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+        headings,
+        text,
+      },
+      links,
+    };
+  }
+
+  // Disallow rules for all crawlers (and ours) from robots.txt
+  private async robotsDisallow(base: URL): Promise<string[]> {
+    const res = await this.fetchText(`${base.origin}/robots.txt`, 200_000, 'text/plain');
+    if (!res) {
+      return [];
+    }
+    const rules: string[] = [];
+    let applies = false;
+    for (const raw of res.text.split(/\r?\n/)) {
+      const line = raw.replace(/#.*/, '').trim();
+      const [key, ...rest] = line.split(':');
+      const value = rest.join(':').trim();
+      if (/^user-agent$/i.test(key)) {
+        applies = value === '*' || /brandengine/i.test(value);
+      } else if (applies && /^disallow$/i.test(key) && value) {
+        rules.push(value.replace(/\*.*$/, ''));
+      }
+    }
+    return rules;
   }
 
   private readJsonLdOrganization(doc: Document) {

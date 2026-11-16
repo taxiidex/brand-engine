@@ -1,6 +1,6 @@
 'use client';
 
-import React, { FC, useCallback, useMemo, useState } from 'react';
+import React, { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import Link from 'next/link';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
@@ -20,30 +20,33 @@ import {
   ChannelAvatar,
   useConnectedChannels,
 } from '@gitroom/frontend/components/brand/channels';
+import { sortTopics, useTopics } from '@gitroom/frontend/components/brand/topics';
 
-const STYLES = [
+const FORMATS = [
   {
-    value: 'photo-hook',
-    label: 'Photo with headline',
-    hint: 'A matching photo with your headline on it',
+    value: 'auto',
+    label: 'Auto (recommended)',
+    hint: 'We pick the design that suits the post best',
   },
-  {
-    value: 'quote-card',
-    label: 'Quote card',
-    hint: 'Your words, big, in your colours',
-  },
-  {
-    value: 'brand-card',
-    label: 'Brand card',
-    hint: 'A clean graphic in your colours',
-  },
-  {
-    value: 'video',
-    label: 'Short video',
-    hint: 'A moving clip with your headline, for Reels and Stories',
-  },
-  { value: 'text', label: 'Text only', hint: 'No image, just the words' },
+  { value: 'photo', label: 'Photo', hint: 'A matching photo with your words on it' },
+  { value: 'graphic', label: 'Graphic', hint: 'A bold design in your colours, no photo' },
+  { value: 'carousel', label: 'Carousel', hint: 'Several slides people swipe through' },
+  { value: 'video', label: 'Short video', hint: 'A moving clip for Reels and Stories' },
+  { value: 'text', label: 'Text only', hint: 'Just the words, no image' },
 ];
+const DESIGNED = ['auto', 'photo', 'graphic', 'carousel'];
+
+const VIBES = [
+  { value: 'auto', label: 'Mix it up' },
+  { value: 'professional', label: 'Professional' },
+  { value: 'bold', label: 'Bold' },
+  { value: 'funny', label: 'Funny' },
+  { value: 'aesthetic', label: 'Aesthetic' },
+  { value: 'inspiring', label: 'Inspiring' },
+];
+const VIBE_LABEL: Record<string, string> = Object.fromEntries(
+  VIBES.map((v) => [v.value, v.label])
+);
 
 const SIZES = [
   { value: 'feed', label: 'Feed (4:5)' },
@@ -51,6 +54,9 @@ const SIZES = [
   { value: 'landscape', label: 'Landscape' },
   { value: 'story', label: 'Story (9:16)' },
 ];
+
+// designs that carry a stock photo, which the client can swap
+const PHOTO_LAYOUTS = ['photo-full', 'photo-split', 'photo-frame', 'meme'];
 
 // networks that can be posted to straight from here; the others need extra
 // details (a board, a video title, ...) and are saved as a draft to finish in
@@ -69,29 +75,54 @@ const QUICK = [
   'nostr',
   'vk',
 ];
-const SHORT = ['x', 'threads', 'bluesky', 'mastodon', 'nostr'];
 
-interface Generated {
+const NETWORKS = [
+  { value: 'facebook', label: 'Main' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'short', label: 'X & Threads' },
+];
+
+// what the server is doing while the client waits for the text
+const WRITING_STEPS = [
+  'Picking an idea and an angle...',
+  'Writing five different hooks...',
+  'Choosing the one that stops the scroll...',
+  'Writing the caption...',
+  'Checking it against your website...',
+  'Almost there...',
+];
+
+interface Composed {
+  id: string;
   topic: string;
+  angleLabel: string;
+  vibe: string;
+  style: string;
+  layout: string;
+  size: string;
   headline: string;
   subtext: string;
   caption: string;
-  shortCaption: string;
   hashtags: string[];
-  photoQuery: string;
-  style: string;
-  image: null | {
-    preview: string;
-    size: string;
-    photoUrl: string | null;
-    photoCredit: { name: string; link: string } | null;
-  };
-  video?: null | {
-    url: string;
-    size: string;
-    videoUrl: string;
-    credit: { name: string; link: string } | null;
-  };
+  altText: string;
+  flags: string[];
+  photoQueries: string[];
+}
+
+interface Design {
+  layout: string;
+  images: string[];
+  width: number;
+  height: number;
+  photoCredit: { name: string; link: string } | null;
+}
+
+interface Video {
+  url: string;
+  size: string;
+  videoUrl: string;
+  credit: { name: string; link: string } | null;
 }
 
 const tomorrowAtTen = () => {
@@ -104,26 +135,64 @@ const tomorrowAtTen = () => {
   )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+const plain = (text: string) => text.replace(/\*/g, '');
+
+// a server error or a dropped connection is worth one more try; a refusal
+// (a 4xx with a reason) is not
+const worthRetry = (res: Response | null) => !res || res.status >= 500;
+
+const Waiting: FC<{ steps: string[]; note?: string }> = ({ steps, note }) => {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setStep((s) => Math.min(s + 1, steps.length - 1)),
+      2800
+    );
+    return () => clearInterval(timer);
+  }, [steps.length]);
+  return (
+    <div className="flex flex-col items-center gap-[10px] py-[32px] text-center">
+      <div className="w-[36px] h-[36px] rounded-full border-[3px] border-newTableBorder border-t-forth animate-spin" />
+      <div className="text-[15px] font-[600]">{steps[step]}</div>
+      {note && <div className="text-[13px] text-textItemBlur">{note}</div>}
+    </div>
+  );
+};
+
 export const CreatePost: FC = () => {
   const fetch = useFetch();
   const toaster = useToaster();
   const { data: brand } = useBrand();
+  const { data: topicList } = useTopics();
   const { channels: allChannels } = useConnectedChannels();
   const channels = useMemo(
     () => allChannels.filter((c) => !c.disabled && !c.inBetweenSteps),
     [allChannels]
   );
 
-  const [topic, setTopic] = useState('');
+  // '' = surprise me, 'id:<topic id>' = a saved idea, 'text:<title>' = a
+  // brand topic before the website was read
+  const [topicChoice, setTopicChoice] = useState('');
   const [ownTopic, setOwnTopic] = useState('');
-  const [style, setStyle] = useState('photo-hook');
+  const [showAllTopics, setShowAllTopics] = useState(false);
+  const [format, setFormat] = useState('auto');
+  const [vibe, setVibe] = useState('auto');
   const [size, setSize] = useState('feed');
   const [picked, setPicked] = useState<string[] | null>(null);
   const selected = picked ?? channels.map((c) => c.id);
 
-  const [post, setPost] = useState<Generated | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [updatingImage, setUpdatingImage] = useState(false);
+  const [post, setPost] = useState<Composed | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [design, setDesign] = useState<Design | null>(null);
+  const [designing, setDesigning] = useState(false);
+  const [designFailed, setDesignFailed] = useState(false);
+  const [slide, setSlide] = useState(0);
+  const [video, setVideo] = useState<Video | null>(null);
+  const [versions, setVersions] = useState<Record<string, string> | null>(null);
+  const [network, setNetwork] = useState('facebook');
+  const [imageText, setImageText] = useState({ headline: '', subtext: '' });
+
   const [publishing, setPublishing] = useState<'' | 'now' | 'schedule' | 'draft'>('');
   const [when, setWhen] = useState(tomorrowAtTen());
   const [published, setPublished] = useState<null | { type: string; date: string }>(
@@ -131,262 +200,227 @@ export const CreatePost: FC = () => {
   );
 
   const [photoQuery, setPhotoQuery] = useState('');
-  const [photos, setPhotos] = useState<any[] | null>(null);
+  const [results, setResults] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
+
+  // answers that arrive after the client moved on to a new post are dropped
+  const current = useRef('');
 
   const selectedChannels = channels.filter((c) => selected.includes(c.id));
   const draftOnly = selectedChannels.filter((c) => !QUICK.includes(c.identifier));
-  const needsShort = selectedChannels.some((c) =>
-    SHORT.some((s) => c.identifier === s || c.identifier.startsWith(`${s}-`))
-  );
 
   const toggleChannel = (id: string) =>
     setPicked(
-      selected.includes(id)
-        ? selected.filter((x) => x !== id)
-        : [...selected, id]
+      selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
     );
 
-  const update = <K extends keyof Generated>(key: K, value: Generated[K]) =>
-    setPost((p) => (p ? { ...p, [key]: value } : p));
-
-  // The image is made after the text, so the client can read the text while
-  // a photo is found and the image is drawn
-  const makeImage = useCallback(
-    async (text: Generated, imageSize: string) => {
-      setUpdatingImage(true);
-      try {
-        const res = await fetch('/brand/image', {
+  const call = useCallback(
+    async (path: string, body?: object, retry = true) => {
+      const send = () =>
+        fetch(path, {
           method: 'POST',
-          body: JSON.stringify({
-            hook: text.headline || brand?.businessName || ' ',
-            subtext: text.subtext || undefined,
-            template: text.style,
-            size: imageSize,
-            photoQuery: text.photoQuery || undefined,
-          }),
-        });
-        if (!res.ok) {
-          toaster.show(
-            await errorMessage(res, 'We could not make the image.'),
-            'warning'
-          );
-          return;
-        }
-        const data = await res.json();
-        setPost((p) =>
-          p
-            ? {
-                ...p,
-                style: data.template,
-                image: {
-                  preview: data.preview,
-                  size: imageSize,
-                  photoUrl: data.photoUrl,
-                  photoCredit: data.photoCredit,
-                },
-              }
-            : p
-        );
-        if (text.style === 'photo-hook' && data.template !== 'photo-hook') {
-          toaster.show(
-            'We could not get a matching photo this time, so we made a brand card. Try "Change the photo".',
-            'warning'
-          );
-        }
-      } finally {
-        setUpdatingImage(false);
+          body: body ? JSON.stringify(body) : undefined,
+        }).catch(() => null);
+      let res = await send();
+      if (retry && worthRetry(res)) {
+        setRetrying(true);
+        res = await send();
+        setRetrying(false);
       }
+      return res;
     },
-    [brand]
+    []
   );
 
-  // A branded video takes longer (a clip is found, downloaded and rendered),
-  // so it is made after the text, like the image
-  const makeVideo = useCallback(
+  const loadVersions = useCallback(async (id: string) => {
+    const res = await call(`/brand/posts/${id}/versions`);
+    if (res?.ok && current.current === id) {
+      setVersions(await res.json());
+    }
+  }, []);
+
+  const makeDesign = useCallback(
     async (
-      text: Generated,
-      videoSize: string,
-      videoUrl?: string,
-      // the credit of a clip picked from the search (the server only knows
-      // the credit of clips it picked itself)
+      id: string,
+      opts: {
+        newDesign?: boolean;
+        photoUrl?: string;
+        headline?: string;
+        subtext?: string;
+      } = {},
       pickedCredit?: { name: string; link: string } | null
     ) => {
-      setUpdatingImage(true);
+      setDesigning(true);
+      setDesignFailed(false);
       try {
-        const res = await fetch('/brand/video', {
-          method: 'POST',
-          body: JSON.stringify({
-            headline: text.headline || brand?.businessName || ' ',
-            subtext: text.subtext || undefined,
-            size: videoSize,
-            videoQuery: text.photoQuery || undefined,
-            videoUrl: videoUrl || undefined,
-          }),
-        });
-        if (!res.ok) {
+        const res = await call(`/brand/posts/${id}/render`, opts);
+        if (current.current !== id) {
+          return;
+        }
+        if (!res?.ok) {
+          setDesignFailed(true);
           toaster.show(
-            await errorMessage(res, 'We could not make the video.'),
+            res
+              ? await errorMessage(res, 'We could not design this post.')
+              : 'We could not reach the server. Check your connection.',
             'warning'
           );
           return;
         }
         const data = await res.json();
-        setPost((p) =>
-          p
-            ? {
-                ...p,
-                video: {
-                  url: data.url,
-                  size: videoSize,
-                  videoUrl: data.videoUrl,
-                  credit:
-                    data.videoCredit ??
-                    pickedCredit ??
-                    (videoUrl && videoUrl === p.video?.videoUrl
-                      ? p.video?.credit
-                      : null) ??
-                    null,
-                },
-              }
-            : p
-        );
+        setDesign((old) => ({
+          layout: data.layout,
+          images: data.images,
+          width: data.width,
+          height: data.height,
+          photoCredit:
+            data.photoCredit ??
+            pickedCredit ??
+            (opts.headline !== undefined && !opts.photoUrl ? old?.photoCredit : null) ??
+            null,
+        }));
+        setSlide(0);
       } finally {
-        setUpdatingImage(false);
+        if (current.current === id) {
+          setDesigning(false);
+        }
+      }
+    },
+    []
+  );
+
+  const makeVideo = useCallback(
+    async (
+      p: Composed,
+      videoSize: string,
+      words: { headline: string; subtext: string },
+      videoUrl?: string,
+      pickedCredit?: { name: string; link: string } | null
+    ) => {
+      setDesigning(true);
+      setDesignFailed(false);
+      try {
+        const res = await call('/brand/video', {
+          headline: plain(words.headline) || brand?.businessName || ' ',
+          subtext: words.subtext || undefined,
+          size: videoSize,
+          videoQuery: p.photoQueries[0] || undefined,
+          videoUrl: videoUrl || undefined,
+        });
+        if (current.current !== p.id) {
+          return;
+        }
+        if (!res?.ok) {
+          setDesignFailed(true);
+          toaster.show(
+            res
+              ? await errorMessage(res, 'We could not make the video.')
+              : 'We could not reach the server. Check your connection.',
+            'warning'
+          );
+          return;
+        }
+        const data = await res.json();
+        setVideo((old) => ({
+          url: data.url,
+          size: videoSize,
+          videoUrl: data.videoUrl,
+          credit:
+            data.videoCredit ??
+            pickedCredit ??
+            (videoUrl && videoUrl === old?.videoUrl ? old?.credit : null) ??
+            null,
+        }));
+      } finally {
+        if (current.current === p.id) {
+          setDesigning(false);
+        }
       }
     },
     [brand]
   );
 
-  const [clips, setClips] = useState<any[] | null>(null);
-  const searchClips = useCallback(async () => {
-    if (photoQuery.trim().length < 2) {
-      return;
-    }
-    setSearching(true);
-    try {
-      const res = await fetch(
-        `/brand/stock-videos?query=${encodeURIComponent(
-          photoQuery.trim()
-        )}&size=${post?.video?.size || size}`
-      );
-      const data = res.ok ? await res.json() : { videos: [] };
-      setClips(data.videos || []);
-    } finally {
-      setSearching(false);
-    }
-  }, [photoQuery, post, size]);
-
-  const generate = useCallback(async () => {
-    setGenerating(true);
+  const write = useCallback(async () => {
+    setWriting(true);
     setPublished(null);
-    setPhotos(null);
+    setResults(null);
+    setPost(null);
+    setDesign(null);
+    setVideo(null);
+    setVersions(null);
+    setDesignFailed(false);
+    current.current = '';
     try {
-      const res = await fetch('/brand/generate', {
-        method: 'POST',
-        body: JSON.stringify({
-          topic: (ownTopic || topic).trim() || undefined,
-          style,
-          size,
-          channels: selectedChannels.map((c) => c.identifier),
-          skipImage: true,
-        }),
+      const res = await call('/brand/compose', {
+        topic: ownTopic.trim()
+          ? ownTopic.trim()
+          : topicChoice.startsWith('text:')
+          ? topicChoice.slice(5)
+          : undefined,
+        topicId:
+          !ownTopic.trim() && topicChoice.startsWith('id:')
+            ? topicChoice.slice(3)
+            : undefined,
+        style: format,
+        vibe,
+        size,
+        channels: selectedChannels.map((c) => c.identifier),
       });
-      if (!res.ok) {
+      if (!res?.ok) {
         toaster.show(
-          await errorMessage(res, 'We could not write a post right now.'),
+          res
+            ? await errorMessage(res, 'We could not write a post right now.')
+            : 'We could not reach the server. Check your connection.',
           'warning'
         );
         return;
       }
-      const data: Generated = await res.json();
-      setPost({ ...data, image: null, video: null });
-      setPhotoQuery(data.photoQuery);
-      setClips(null);
-      if (style === 'video') {
-        makeVideo(data, size);
-      } else if (style !== 'text') {
-        makeImage(data, size);
+      const data: Composed = await res.json();
+      current.current = data.id;
+      setPost(data);
+      setImageText({ headline: data.headline, subtext: data.subtext || '' });
+      setNetwork('facebook');
+      setPhotoQuery(data.photoQueries[0] || '');
+      loadVersions(data.id);
+      if (DESIGNED.includes(format)) {
+        makeDesign(data.id);
+      } else if (format === 'video') {
+        makeVideo(data, size, { headline: data.headline, subtext: data.subtext });
       }
     } finally {
-      setGenerating(false);
+      setWriting(false);
     }
-  }, [ownTopic, topic, style, size, selectedChannels, makeImage, makeVideo]);
+  }, [ownTopic, topicChoice, format, vibe, size, selectedChannels]);
 
-  const rerender = useCallback(
-    async (
-      photoUrl?: string | null,
-      // the credit of a photo picked from the search
-      pickedCredit?: { name: string; link: string } | null
-    ) => {
-      if (!post || post.style === 'text') {
-        return;
-      }
-      setUpdatingImage(true);
-      try {
-        const res = await fetch('/brand/image', {
-          method: 'POST',
-          body: JSON.stringify({
-            hook: post.headline || brand?.businessName || ' ',
-            subtext: post.subtext || undefined,
-            template: post.style,
-            size: post.image?.size || size,
-            photoUrl: photoUrl || undefined,
-          }),
-        });
-        if (!res.ok) {
-          toaster.show(
-            await errorMessage(res, 'We could not update the image.'),
-            'warning'
-          );
-          return;
-        }
-        const data = await res.json();
-        setPost((p) =>
-          p && p.image
-            ? {
-                ...p,
-                style: data.template,
-                image: {
-                  ...p.image,
-                  preview: data.preview,
-                  photoUrl: data.photoUrl ?? photoUrl ?? p.image.photoUrl,
-                  // a new photo carries its own credit, the same photo
-                  // keeps the one it had
-                  photoCredit:
-                    data.photoCredit ??
-                    pickedCredit ??
-                    (!photoUrl || photoUrl === p.image.photoUrl
-                      ? p.image.photoCredit
-                      : null),
-                },
-              }
-            : p
-        );
-      } finally {
-        setUpdatingImage(false);
-      }
-    },
-    [post, size, brand]
-  );
-
-  const searchPhotos = useCallback(async () => {
-    if (photoQuery.trim().length < 2) {
+  const search = useCallback(async () => {
+    if (photoQuery.trim().length < 2 || !post) {
       return;
     }
     setSearching(true);
     try {
+      const forVideo = post.style === 'video';
       const res = await fetch(
-        `/brand/stock?query=${encodeURIComponent(photoQuery.trim())}&size=${
-          post?.image?.size || size
-        }`
+        `/brand/${forVideo ? 'stock-videos' : 'stock'}?query=${encodeURIComponent(
+          photoQuery.trim()
+        )}&size=${forVideo ? video?.size || size : post.size}`
       );
-      const data = res.ok ? await res.json() : { photos: [] };
-      setPhotos(data.photos || []);
+      const data = res.ok ? await res.json() : {};
+      setResults((forVideo ? data.videos : data.photos) || []);
     } finally {
       setSearching(false);
     }
-  }, [photoQuery, post, size]);
+  }, [photoQuery, post, video, size]);
+
+  const caption = post?.caption || '';
+  const textFor = (key: string) =>
+    key === 'facebook' ? caption : versions?.[key] ?? '';
+  const setTextFor = (key: string, value: string) => {
+    if (key === 'facebook') {
+      setPost((p) => (p ? { ...p, caption: value } : p));
+    } else {
+      setVersions((v) => ({ ...(v || {}), [key]: value }));
+    }
+  };
 
   const publish = useCallback(
     async (type: 'now' | 'schedule' | 'draft') => {
@@ -405,22 +439,18 @@ export const CreatePost: FC = () => {
             integrations: selected,
             type,
             date: type === 'now' ? undefined : new Date(when).toISOString(),
+            postId: post.id,
             caption: post.caption,
-            shortCaption: post.shortCaption || undefined,
+            captions: { ...(versions || {}), facebook: post.caption },
             hashtags: post.hashtags,
             style: post.style,
-            size: post.image?.size || size,
-            headline: post.headline || undefined,
-            subtext: post.subtext || undefined,
-            photoUrl: post.image?.photoUrl || undefined,
-            videoPath: post.style === 'video' ? post.video?.url : undefined,
+            size: video?.size || post.size,
+            headline: plain(imageText.headline) || undefined,
+            videoPath: post.style === 'video' ? video?.url : undefined,
           }),
         });
         if (!res.ok) {
-          toaster.show(
-            await errorMessage(res, 'We could not send this post.'),
-            'warning'
-          );
+          toaster.show(await errorMessage(res, 'We could not send this post.'), 'warning');
           return;
         }
         const data = await res.json();
@@ -437,72 +467,107 @@ export const CreatePost: FC = () => {
         setPublishing('');
       }
     },
-    [post, selected, when, size]
+    [post, versions, selected, when, video, imageText]
   );
 
   if (!brand) {
     return null;
   }
 
-  const topics = brand.targetTopics || [];
-  const busy = generating || !!publishing || updatingImage;
+  // ideas: the saved ones (pinned first, muted hidden), or the brand's
+  // topics while the website is still being read
+  const ideas = sortTopics(topicList || []).filter((t) => !t.muted);
+  const ideaOptions = ideas.length
+    ? ideas.map((t) => ({ value: `id:${t.id}`, label: t.pinned ? `★ ${t.title}` : t.title }))
+    : (brand.targetTopics || []).map((t: string) => ({ value: `text:${t}`, label: t }));
+  const shownIdeas = showAllTopics ? ideaOptions : ideaOptions.slice(0, 10);
+
+  const busy = writing || !!publishing || designing;
+  const isVideo = post?.style === 'video';
+  const isText = post?.style === 'text';
+  const hasPhoto = !!design && PHOTO_LAYOUTS.includes(design.layout);
+  const imageWordsChanged =
+    !!post &&
+    (imageText.headline !== post.headline || imageText.subtext !== (post.subtext || ''));
+  const shortLength = textFor('short').length;
 
   return (
     <div className="flex-1 bg-newBgColorInner p-[20px] mobile:p-[12px] overflow-auto">
       <div className="max-w-[1100px] mx-auto flex flex-col gap-[16px]">
         <Card
           title="What do you want to post about?"
-          hint="Pick one of your topics, write your own, or leave it to us."
+          hint="Pick one of your ideas, write your own, or let us choose."
         >
           <ChoiceChips
-            options={[
-              { value: '', label: 'Surprise me' },
-              ...topics.map((t) => ({ value: t, label: t })),
-            ]}
-            value={ownTopic ? '__own' : topic}
+            options={[{ value: '', label: 'Surprise me' }, ...shownIdeas]}
+            value={ownTopic ? '__own' : topicChoice}
             onChange={(v) => {
-              setTopic(v);
+              setTopicChoice(v);
               setOwnTopic('');
             }}
           />
+          {ideaOptions.length > 10 && (
+            <button
+              type="button"
+              onClick={() => setShowAllTopics(!showAllTopics)}
+              className="text-[13px] text-forth underline w-fit"
+            >
+              {showAllTopics ? 'Show fewer ideas' : `Show all ${ideaOptions.length} ideas`}
+            </button>
+          )}
           <input
             value={ownTopic}
             onChange={(e) => setOwnTopic(e.target.value)}
-            placeholder="Or say it in your own words, e.g. our new 24/7 airport service"
+            placeholder="Or say it in your own words, e.g. we now open on Sundays"
             maxLength={200}
             className={inputClass}
           />
         </Card>
 
         <div className="grid grid-cols-2 gap-[16px] mobile:grid-cols-1">
-          <Card title="Style">
+          <Card title="Format">
             <div className="grid grid-cols-2 gap-[8px]">
-              {STYLES.map((s) => (
+              {FORMATS.map((f) => (
                 <button
                   type="button"
-                  key={s.value}
+                  key={f.value}
                   onClick={() => {
-                    setStyle(s.value);
-                    // videos are mostly watched as Reels and Stories
-                    if (s.value === 'video' && size === 'feed') {
+                    setFormat(f.value);
+                    // videos are mostly watched as Reels and Stories; a
+                    // carousel only works in the feed
+                    if (f.value === 'video' && size === 'feed') {
                       setSize('story');
+                    }
+                    if (f.value === 'carousel' && (size === 'story' || size === 'landscape')) {
+                      setSize('feed');
                     }
                   }}
                   className={clsx(
                     'text-start p-[12px] rounded-[10px] border transition-colors',
-                    style === s.value
+                    format === f.value
                       ? 'border-forth bg-boxHover'
                       : 'border-newTableBorder hover:border-forth'
                   )}
                 >
-                  <div className="text-[14px] font-[600]">{s.label}</div>
-                  <div className="text-[12px] text-textItemBlur">{s.hint}</div>
+                  <div className="text-[14px] font-[600]">{f.label}</div>
+                  <div className="text-[12px] text-textItemBlur">{f.hint}</div>
                 </button>
               ))}
             </div>
-            {style !== 'text' && (
-              <Field label={style === 'video' ? 'Video size' : 'Image size'}>
-                <ChoiceChips options={SIZES} value={size} onChange={setSize} />
+            <Field label="Feel">
+              <ChoiceChips options={VIBES} value={vibe} onChange={setVibe} />
+            </Field>
+            {format !== 'text' && (
+              <Field label="Size">
+                <ChoiceChips
+                  options={
+                    format === 'carousel'
+                      ? SIZES.filter((s) => s.value === 'feed' || s.value === 'square')
+                      : SIZES
+                  }
+                  value={size}
+                  onChange={setSize}
+                />
               </Field>
             )}
           </Card>
@@ -532,9 +597,7 @@ export const CreatePost: FC = () => {
                   >
                     <ChannelAvatar channel={c} size={36} />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-[600] truncate">
-                        {c.name}
-                      </div>
+                      <div className="text-[14px] font-[600] truncate">{c.name}</div>
                       {!QUICK.includes(c.identifier) && (
                         <div className="text-[12px] text-textItemBlur">
                           Saved as a draft, finished in the calendar
@@ -560,19 +623,26 @@ export const CreatePost: FC = () => {
 
         <div className="flex justify-center">
           <Button
-            onClick={generate}
-            loading={generating}
+            onClick={write}
+            loading={writing}
             disabled={busy}
             className="rounded-[10px] !h-[54px] px-[48px] text-[16px]"
           >
             {post ? 'Write another one' : 'Create my post'}
           </Button>
         </div>
-        {generating && (
-          <div className="text-center text-[14px] text-textItemBlur">
-            Writing your post and making the image. This takes about 10
-            seconds...
-          </div>
+
+        {writing && (
+          <Card title="Writing your post">
+            <Waiting
+              steps={WRITING_STEPS}
+              note={
+                retrying
+                  ? 'Something went wrong, so we are trying again...'
+                  : 'This takes about 15 seconds.'
+              }
+            />
+          </Card>
         )}
 
         {post && (
@@ -580,20 +650,46 @@ export const CreatePost: FC = () => {
             title="Your post"
             hint="Change anything you like, then post it, schedule it, or keep it as a draft."
           >
+            <div className="flex flex-wrap gap-[6px] text-[12px]">
+              <span className="px-[10px] py-[4px] rounded-full bg-boxHover">
+                Idea: {post.topic}
+              </span>
+              <span className="px-[10px] py-[4px] rounded-full bg-boxHover">
+                Angle: {post.angleLabel}
+              </span>
+              <span className="px-[10px] py-[4px] rounded-full bg-boxHover">
+                Feel: {VIBE_LABEL[post.vibe] || post.vibe}
+              </span>
+            </div>
+
+            {!!post.flags.length && (
+              <div className="rounded-[10px] border border-yellow-500/50 bg-yellow-500/10 p-[12px] text-[13px] flex flex-col gap-[4px]">
+                <div className="font-[600]">Check before you post</div>
+                {post.flags.map((f) => (
+                  <div key={f}>
+                    {f.startsWith('confirm:')
+                      ? `We could not find this on your website: ${f.slice(8)} Make sure it is true before you post.`
+                      : f}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div
               className={clsx(
                 'grid gap-[24px]',
-                post.style !== 'text'
+                !isText
                   ? 'grid-cols-[minmax(0,420px),1fr] tablet:grid-cols-1'
                   : 'grid-cols-1'
               )}
             >
-              {post.style === 'video' && (
+              {!isText && (
                 <div className="flex flex-col gap-[12px]">
-                  {post.video ? (
+                  {/* the image, the slides or the video */}
+                  {isVideo && video ? (
                     <video
-                      key={post.video.url}
-                      src={post.video.url}
+                      key={video.url}
+                      src={video.url}
                       controls={true}
                       autoPlay={true}
                       muted={true}
@@ -601,253 +697,185 @@ export const CreatePost: FC = () => {
                       playsInline={true}
                       className={clsx(
                         'w-full max-h-[620px] rounded-[10px] border border-newTableBorder bg-black',
-                        updatingImage && 'opacity-50'
+                        designing && 'opacity-50'
                       )}
                     />
-                  ) : (
-                    <div className="aspect-[9/16] max-h-[520px] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
-                      {updatingImage ? (
-                        <>
-                          <div className="text-[15px] font-[600] text-textColor">
-                            Making your video...
-                          </div>
-                          <div className="text-[13px]">
-                            Finding a clip and putting your headline, logo and
-                            button on it. This takes about 30 seconds.
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-[14px]">
-                            The video is not ready.
-                          </div>
-                          <Button
-                            secondary={true}
-                            onClick={() => makeVideo(post, size)}
-                            className="rounded-[8px]"
-                          >
-                            Try again
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {post.video?.credit && (
-                    <div className="text-[12px] text-textItemBlur">
-                      Video by{' '}
-                      <a
-                        href={post.video.credit.link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline"
-                      >
-                        {post.video.credit.name}
-                      </a>
-                    </div>
-                  )}
-                  <Field label="Headline on the video">
-                    <input
-                      value={post.headline}
-                      onChange={(e) => update('headline', e.target.value)}
-                      maxLength={220}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Line under the headline">
-                    <input
-                      value={post.subtext}
-                      onChange={(e) => update('subtext', e.target.value)}
-                      maxLength={200}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <div className="flex gap-[8px] flex-wrap">
-                    <Button
-                      secondary={true}
-                      onClick={() =>
-                        makeVideo(
-                          post,
-                          post.video?.size || size,
-                          post.video?.videoUrl
-                        )
-                      }
-                      loading={updatingImage}
-                      disabled={busy}
-                      className="rounded-[8px]"
-                    >
-                      Update video
-                    </Button>
-                    {post.video && (
-                      <a
-                        href={post.video.url}
-                        download="post-video.mp4"
-                        className="h-[40px] px-[16px] rounded-[8px] border border-newTableBorder flex items-center text-[14px] hover:border-forth"
-                      >
-                        Download
-                      </a>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-[8px]">
-                    <div className="text-[14px] font-[500]">Change the clip</div>
-                    <div className="flex gap-[8px]">
-                      <input
-                        value={photoQuery}
-                        onChange={(e) => setPhotoQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && searchClips()}
-                        placeholder="e.g. city traffic at night"
-                        className={inputClass}
-                      />
-                      <Button
-                        secondary={true}
-                        onClick={searchClips}
-                        loading={searching}
-                        disabled={searching}
-                        className="rounded-[8px] !h-[44px]"
-                      >
-                        Search
-                      </Button>
-                    </div>
-                    {clips && !clips.length && (
-                      <div className="text-[13px] text-textItemBlur">
-                        No clips found, try other words.
-                      </div>
-                    )}
-                    {!!clips?.length && (
-                      <div className="grid grid-cols-4 gap-[6px]">
-                        {clips.map((c) => (
-                          <button
-                            type="button"
-                            key={c.id}
-                            disabled={busy}
-                            onClick={() =>
-                              makeVideo(
-                                post,
-                                post.video?.size || size,
-                                c.url,
-                                c.credit
-                              )
-                            }
-                            className={clsx(
-                              'aspect-square rounded-[6px] overflow-hidden border-2 relative',
-                              post.video?.videoUrl === c.url
-                                ? 'border-forth'
-                                : 'border-transparent hover:border-newTableBorder'
-                            )}
-                          >
-                            <img
-                              src={c.thumb}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                            <span className="absolute bottom-[2px] end-[4px] text-[10px] text-white bg-black/60 px-[4px] rounded">
-                              {c.duration}s
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {post.style !== 'text' && post.style !== 'video' && !post.image && (
-                <div className="aspect-[4/5] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
-                  {updatingImage ? (
-                    <>
-                      <div className="text-[15px] font-[600] text-textColor">
-                        Making your image...
-                      </div>
-                      <div className="text-[13px]">
-                        Finding a photo and putting your headline, colours and
-                        logo on it.
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-[14px]">The image is not ready.</div>
-                      <Button
-                        secondary={true}
-                        onClick={() => post && makeImage(post, size)}
-                        className="rounded-[8px]"
-                      >
-                        Try again
-                      </Button>
-                    </>
-                  )}
-                </div>
-              )}
-              {post.image && (
-                <div className="flex flex-col gap-[12px]">
-                  <div className="relative">
-                    <img
-                      src={post.image.preview}
-                      alt="Post image"
-                      className={clsx(
-                        'w-full rounded-[10px] border border-newTableBorder',
-                        updatingImage && 'opacity-50'
-                      )}
-                    />
-                  </div>
-                  {post.image.photoCredit && (
-                    <div className="text-[12px] text-textItemBlur">
-                      Photo by{' '}
-                      <a
-                        href={post.image.photoCredit.link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline"
-                      >
-                        {post.image.photoCredit.name}
-                      </a>
-                    </div>
-                  )}
-                  <Field label="Headline on the image">
-                    <input
-                      value={post.headline}
-                      onChange={(e) => update('headline', e.target.value)}
-                      maxLength={220}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Line under the headline">
-                    <input
-                      value={post.subtext}
-                      onChange={(e) => update('subtext', e.target.value)}
-                      maxLength={200}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <div className="flex gap-[8px] flex-wrap">
-                    <Button
-                      secondary={true}
-                      onClick={() => rerender(post.image?.photoUrl)}
-                      loading={updatingImage}
-                      disabled={busy}
-                      className="rounded-[8px]"
-                    >
-                      Update image
-                    </Button>
-                    <a
-                      href={post.image.preview}
-                      download="post-image"
-                      className="h-[40px] px-[16px] rounded-[8px] border border-newTableBorder flex items-center text-[14px] hover:border-forth"
-                    >
-                      Download
-                    </a>
-                  </div>
-                  {post.style === 'photo-hook' && (
+                  ) : !isVideo && design ? (
                     <div className="flex flex-col gap-[8px]">
-                      <div className="text-[14px] font-[500]">Change the photo</div>
+                      <img
+                        src={design.images[slide] || design.images[0]}
+                        alt={post.altText || 'Post image'}
+                        className={clsx(
+                          'w-full rounded-[10px] border border-newTableBorder',
+                          designing && 'opacity-50'
+                        )}
+                      />
+                      {design.images.length > 1 && (
+                        <div className="flex gap-[6px] overflow-x-auto pb-[4px]">
+                          {design.images.map((src, i) => (
+                            <button
+                              type="button"
+                              key={src}
+                              onClick={() => setSlide(i)}
+                              aria-label={`Slide ${i + 1}`}
+                              className={clsx(
+                                'w-[56px] shrink-0 rounded-[6px] overflow-hidden border-2',
+                                slide === i ? 'border-forth' : 'border-transparent'
+                              )}
+                            >
+                              <img src={src} alt="" className="w-full" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="aspect-[4/5] w-full rounded-[10px] border border-dashed border-newTableBorder flex flex-col items-center justify-center gap-[8px] text-center p-[24px] text-textItemBlur">
+                      {designing ? (
+                        <Waiting
+                          steps={
+                            isVideo
+                              ? ['Finding a clip...', 'Putting your words and logo on it...', 'Rendering the video...']
+                              : ['Choosing a design...', 'Finding the right photo...', 'Putting it together...']
+                          }
+                          note={
+                            retrying
+                              ? 'Something went wrong, so we are trying again...'
+                              : isVideo
+                              ? 'This takes about 30 seconds.'
+                              : 'Read the caption while you wait.'
+                          }
+                        />
+                      ) : (
+                        designFailed && (
+                          <>
+                            <div className="text-[14px]">
+                              The {isVideo ? 'video' : 'image'} is not ready.
+                            </div>
+                            <Button
+                              secondary={true}
+                              onClick={() =>
+                                isVideo
+                                  ? makeVideo(post, size, imageText)
+                                  : makeDesign(post.id)
+                              }
+                              className="rounded-[8px]"
+                            >
+                              Try again
+                            </Button>
+                          </>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {(design?.photoCredit || video?.credit) && (
+                    <div className="text-[12px] text-textItemBlur">
+                      {isVideo ? 'Video' : 'Photo'} by{' '}
+                      <a
+                        href={(isVideo ? video?.credit : design?.photoCredit)?.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        {(isVideo ? video?.credit : design?.photoCredit)?.name}
+                      </a>
+                    </div>
+                  )}
+
+                  {(design || video) && (
+                    <div className="flex gap-[8px] flex-wrap">
+                      {!isVideo && (
+                        <Button
+                          secondary={true}
+                          onClick={() => makeDesign(post.id, { newDesign: true })}
+                          loading={designing}
+                          disabled={busy}
+                          className="rounded-[8px]"
+                        >
+                          Try another design
+                        </Button>
+                      )}
+                      {isVideo && video ? (
+                        <a
+                          href={video.url}
+                          download="post-video.mp4"
+                          className="h-[40px] px-[16px] rounded-[8px] border border-newTableBorder flex items-center text-[14px] hover:border-forth"
+                        >
+                          Download
+                        </a>
+                      ) : (
+                        design && (
+                          <a
+                            href={design.images[slide] || design.images[0]}
+                            download={`post-${slide + 1}.png`}
+                            className="h-[40px] px-[16px] rounded-[8px] border border-newTableBorder flex items-center text-[14px] hover:border-forth"
+                          >
+                            {design.images.length > 1 ? `Download slide ${slide + 1}` : 'Download'}
+                          </a>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  <Field
+                    label={isVideo ? 'Words on the video' : 'Words on the image'}
+                    hint={isVideo ? undefined : 'Put *stars* around words to highlight them.'}
+                  >
+                    <input
+                      value={imageText.headline}
+                      onChange={(e) => setImageText({ ...imageText, headline: e.target.value })}
+                      maxLength={220}
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Smaller line (optional)">
+                    <input
+                      value={imageText.subtext}
+                      onChange={(e) => setImageText({ ...imageText, subtext: e.target.value })}
+                      maxLength={200}
+                      className={inputClass}
+                    />
+                  </Field>
+                  {imageWordsChanged && (
+                    <Button
+                      onClick={() => {
+                        setPost((p) =>
+                          p ? { ...p, headline: imageText.headline, subtext: imageText.subtext } : p
+                        );
+                        if (isVideo) {
+                          makeVideo(post, video?.size || size, imageText, video?.videoUrl);
+                        } else {
+                          makeDesign(post.id, {
+                            headline: imageText.headline,
+                            subtext: imageText.subtext,
+                          });
+                        }
+                      }}
+                      loading={designing}
+                      disabled={busy || !imageText.headline.trim()}
+                      className="rounded-[8px] w-fit"
+                    >
+                      Update the {isVideo ? 'video' : 'image'}
+                    </Button>
+                  )}
+
+                  {(hasPhoto || (isVideo && video)) && (
+                    <div className="flex flex-col gap-[8px]">
+                      <div className="text-[14px] font-[500]">
+                        Change the {isVideo ? 'clip' : 'photo'}
+                      </div>
                       <div className="flex gap-[8px]">
                         <input
                           value={photoQuery}
                           onChange={(e) => setPhotoQuery(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && searchPhotos()}
-                          placeholder="e.g. airport taxi"
+                          onKeyDown={(e) => e.key === 'Enter' && search()}
+                          placeholder={isVideo ? 'e.g. city traffic at night' : 'e.g. coffee on a desk'}
                           className={inputClass}
                         />
                         <Button
                           secondary={true}
-                          onClick={searchPhotos}
+                          onClick={search}
                           loading={searching}
                           disabled={searching}
                           className="rounded-[8px] !h-[44px]"
@@ -855,31 +883,31 @@ export const CreatePost: FC = () => {
                           Search
                         </Button>
                       </div>
-                      {photos && !photos.length && (
+                      {results && !results.length && (
                         <div className="text-[13px] text-textItemBlur">
-                          No photos found, try other words.
+                          Nothing found, try other words.
                         </div>
                       )}
-                      {!!photos?.length && (
+                      {!!results?.length && (
                         <div className="grid grid-cols-4 gap-[6px]">
-                          {photos.map((p) => (
+                          {results.map((r) => (
                             <button
                               type="button"
-                              key={p.id}
+                              key={r.id}
                               disabled={busy}
-                              onClick={() => rerender(p.url, p.credit)}
-                              className={clsx(
-                                'aspect-square rounded-[6px] overflow-hidden border-2',
-                                post.image?.photoUrl === p.url
-                                  ? 'border-forth'
-                                  : 'border-transparent hover:border-newTableBorder'
-                              )}
+                              onClick={() =>
+                                isVideo
+                                  ? makeVideo(post, video?.size || size, imageText, r.url, r.credit)
+                                  : makeDesign(post.id, { photoUrl: r.url }, r.credit)
+                              }
+                              className="aspect-square rounded-[6px] overflow-hidden border-2 border-transparent hover:border-newTableBorder relative"
                             >
-                              <img
-                                src={p.thumb}
-                                alt=""
-                                className="w-full h-full object-cover"
-                              />
+                              <img src={r.thumb} alt="" className="w-full h-full object-cover" />
+                              {isVideo && (
+                                <span className="absolute bottom-[2px] end-[4px] text-[10px] text-white bg-black/60 px-[4px] rounded">
+                                  {r.duration}s
+                                </span>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -890,33 +918,51 @@ export const CreatePost: FC = () => {
               )}
 
               <div className="flex flex-col gap-[12px]">
-                <Field label="Caption">
-                  <textarea
-                    value={post.caption}
-                    onChange={(e) => update('caption', e.target.value)}
-                    className={clsx(textareaClass, 'min-h-[220px]')}
-                  />
-                </Field>
-                {needsShort && (
-                  <Field
-                    label="Short version for X, Threads and Bluesky"
-                    hint={`${post.shortCaption.length} of 280 characters`}
-                  >
+                <div className="flex flex-col gap-[8px]">
+                  <div className="text-[14px] font-[500]">Caption</div>
+                  <div className="flex gap-[6px] flex-wrap">
+                    {NETWORKS.map((n) => (
+                      <button
+                        type="button"
+                        key={n.value}
+                        onClick={() => setNetwork(n.value)}
+                        className={clsx(
+                          'px-[12px] h-[32px] rounded-[8px] border text-[13px]',
+                          network === n.value
+                            ? 'bg-forth border-forth text-white'
+                            : 'border-newTableBorder hover:border-forth'
+                        )}
+                      >
+                        {n.label}
+                      </button>
+                    ))}
+                  </div>
+                  {network !== 'facebook' && !versions ? (
+                    <div className="min-h-[220px] rounded-[10px] border border-newTableBorder flex items-center justify-center text-[13px] text-textItemBlur p-[16px] text-center">
+                      Writing the {NETWORKS.find((n) => n.value === network)?.label} version...
+                    </div>
+                  ) : (
                     <textarea
-                      value={post.shortCaption}
-                      onChange={(e) => update('shortCaption', e.target.value)}
-                      maxLength={280}
-                      className={textareaClass}
+                      value={textFor(network)}
+                      onChange={(e) => setTextFor(network, e.target.value)}
+                      maxLength={network === 'short' ? 280 : 5000}
+                      className={clsx(textareaClass, network === 'short' ? 'min-h-[120px]' : 'min-h-[260px]')}
                     />
-                  </Field>
-                )}
+                  )}
+                  <div className="text-[12px] text-textItemBlur">
+                    {network === 'facebook'
+                      ? 'Used for Facebook and every network without its own version.'
+                      : network === 'short'
+                      ? `${shortLength} of 280 characters. Used for X, Threads, Bluesky and Mastodon.`
+                      : `Used for ${NETWORKS.find((n) => n.value === network)?.label}.`}
+                  </div>
+                </div>
                 <Field label="Hashtags">
                   <TagInput
                     values={post.hashtags}
                     onChange={(v) =>
-                      update(
-                        'hashtags',
-                        v.map((h) => h.replace(/\s+/g, ''))
+                      setPost((p) =>
+                        p ? { ...p, hashtags: v.map((h) => h.replace(/\s+/g, '')) } : p
                       )
                     }
                     placeholder="Add a hashtag and press Enter"
@@ -938,11 +984,21 @@ export const CreatePost: FC = () => {
                       in the calendar.
                     </div>
                   )}
+                  {!isText && !design && !video && (
+                    <div className="text-[13px] text-textItemBlur">
+                      You can post as soon as the {isVideo ? 'video' : 'image'} is ready.
+                    </div>
+                  )}
                   <div className="flex gap-[8px] flex-wrap items-center">
                     <Button
                       onClick={() => publish('now')}
                       loading={publishing === 'now'}
-                      disabled={busy || !selected.length || !!draftOnly.length}
+                      disabled={
+                        busy ||
+                        !selected.length ||
+                        !!draftOnly.length ||
+                        (!isText && !design && !video)
+                      }
                       className="rounded-[8px] !h-[44px]"
                     >
                       Post now
@@ -956,7 +1012,12 @@ export const CreatePost: FC = () => {
                     <Button
                       onClick={() => publish('schedule')}
                       loading={publishing === 'schedule'}
-                      disabled={busy || !selected.length || !!draftOnly.length}
+                      disabled={
+                        busy ||
+                        !selected.length ||
+                        !!draftOnly.length ||
+                        (!isText && !design && !video)
+                      }
                       className="rounded-[8px] !h-[44px]"
                     >
                       Schedule
@@ -965,7 +1026,7 @@ export const CreatePost: FC = () => {
                       secondary={true}
                       onClick={() => publish('draft')}
                       loading={publishing === 'draft'}
-                      disabled={busy || !selected.length}
+                      disabled={busy || !selected.length || (!isText && !design && !video)}
                       className="rounded-[8px] !h-[44px]"
                     >
                       Save as draft

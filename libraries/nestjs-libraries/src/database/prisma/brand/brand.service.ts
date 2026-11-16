@@ -27,6 +27,7 @@ import {
 } from '@gitroom/nestjs-libraries/render/video.renderer';
 import { GenerateBrandVideoDto } from '@gitroom/nestjs-libraries/dtos/brand/brand.video.dto';
 import { StockVideo } from '@gitroom/nestjs-libraries/stock/stock.service';
+import { EngineService } from '@gitroom/nestjs-libraries/database/prisma/brand/engine.service';
 import {
   BRAND_TONES,
   BrandProfileDto,
@@ -159,7 +160,7 @@ const escapeHtml = (text: string) =>
 
 // A video we rendered and stored ourselves: an .mp4 in this server's own
 // upload storage. Anything else is refused when a video post is published.
-const isOwnRenderedVideo = (path: string) => {
+const isOwnUpload = (path: string, extensions: string[]) => {
   const base =
     process.env.STORAGE_PROVIDER === 'cloudflare'
       ? process.env.CLOUDFLARE_BUCKET_URL || ''
@@ -167,8 +168,11 @@ const isOwnRenderedVideo = (path: string) => {
   if (!base || !path.startsWith(base) || path.includes('..')) {
     return false;
   }
-  return /^[\w/-]+\.mp4$/.test(path.slice(base.length).replace(/^\//, ''));
+  return new RegExp(`^[\\w/-]+\\.(${extensions.join('|')})$`).test(
+    path.slice(base.length).replace(/^\//, '')
+  );
 };
+const isOwnRenderedVideo = (path: string) => isOwnUpload(path, ['mp4']);
 
 const orientationFor = (size: string) =>
   size === 'landscape'
@@ -206,7 +210,8 @@ export class BrandService {
     private _mediaService: MediaService,
     private _integrationService: IntegrationService,
     private _postsService: PostsService,
-    private _videoRenderer: VideoRenderer
+    private _videoRenderer: VideoRenderer,
+    private _engineService: EngineService
   ) {}
 
   private storage = UploadFactory.createStorage();
@@ -215,8 +220,20 @@ export class BrandService {
     return this._brandRepository.getBrand(orgId);
   }
 
-  saveBrand(orgId: string, body: BrandProfileDto) {
-    return this._brandRepository.saveBrand(orgId, body);
+  async saveBrand(orgId: string, body: BrandProfileDto) {
+    const saved = await this._brandRepository.saveBrand(orgId, body);
+    // first save with a website: build the topic pool in the background
+    if (saved.websiteUrl) {
+      this._engineService
+        .listTopics(orgId)
+        .then((topics) =>
+          topics.some((t) => t.kind !== 'custom')
+            ? undefined
+            : this._engineService.refreshTopics(orgId)
+        )
+        .catch((err) => this._logger.warn(`Topic refresh failed: ${err}`));
+    }
+    return saved;
   }
 
   async analyzeWebsite(url: string): Promise<BrandDraft> {
@@ -677,8 +694,55 @@ Channels: ${channels.join(', ') || 'Facebook, Instagram, LinkedIn'}`,
       date = new Date(body.date);
     }
 
-    let media: { id: string; path: string } | undefined;
-    if (body.style === 'video') {
+    // a post written by the content engine: its designed images (one, or
+    // several for a carousel) are already stored
+    const engined = body.postId
+      ? await this._engineService.getPost(orgId, body.postId)
+      : null;
+    if (body.postId && !engined) {
+      throw new BadRequestException('This post no longer exists. Create a new one.');
+    }
+    // the network versions are written while the image is designed; when
+    // the client posts before they arrive, write them now
+    if (engined) {
+      const sent = body.captions || {};
+      if (!sent.linkedin || !sent.instagram || !sent.short) {
+        const written = await this._engineService.versions(orgId, engined.id);
+        body.captions = { ...written, facebook: body.caption, ...sent };
+      }
+    }
+
+    let media: { id: string; path: string; alt?: string } | undefined;
+    const extraMedia: { id: string; path: string; alt?: string }[] = [];
+    if (
+      engined &&
+      engined.imagePaths.length &&
+      body.style !== 'video' &&
+      body.style !== 'text'
+    ) {
+      for (const path of engined.imagePaths) {
+        if (!isOwnUpload(path, ['png', 'jpg', 'jpeg'])) {
+          throw new BadRequestException('Design the post again, then post it.');
+        }
+        const saved = await this._mediaService.saveFile(
+          orgId,
+          path.split('/').pop()!,
+          path
+        );
+        const item = {
+          id: saved.id,
+          path: saved.path,
+          ...(engined.altText ? { alt: engined.altText.slice(0, 400) } : {}),
+        };
+        if (!media) {
+          media = item;
+        } else {
+          extraMedia.push(item);
+        }
+      }
+    } else if (['auto', 'photo', 'graphic', 'carousel'].includes(body.style)) {
+      throw new BadRequestException('Wait for the design to finish, then post it.');
+    } else if (body.style === 'video') {
       // the video was rendered and stored by /brand/video; only a file we
       // stored ourselves is accepted
       if (!body.videoPath || !isOwnRenderedVideo(body.videoPath)) {
@@ -724,6 +788,41 @@ Channels: ${channels.join(', ') || 'Facebook, Instagram, LinkedIn'}`,
       return text;
     })();
 
+    // one version of the text per network when the engine wrote them
+    const brandHost = (() => {
+      try {
+        return new URL(brand.ctaUrl || brand.websiteUrl || '').hostname.replace(/^www\./, '');
+      } catch (err) {
+        return null;
+      }
+    })();
+    const textFor = (identifier: string) => {
+      const platform = EngineService.platformFor(identifier);
+      const versions = (body.captions || {}) as Record<string, string>;
+      let text: string;
+      if (platform === 'short') {
+        text = versions.short?.trim()
+          ? (() => {
+              let t = versions.short.trim().slice(0, SHORT_TEXT_LIMIT);
+              for (const tag of hashtags.slice(0, 2)) {
+                const next = `${t} ${tag}`;
+                if (next.length > SHORT_TEXT_LIMIT) {
+                  break;
+                }
+                t = next;
+              }
+              return t;
+            })()
+          : shortText;
+      } else {
+        const base = (platform !== 'default' && versions[platform]?.trim()) || body.caption.trim();
+        text = [base, hashtags.join(' ')].filter(Boolean).join('\n\n');
+      }
+      return body.postId
+        ? EngineService.withTracking(text, brandHost, identifier, engined?.topic || 'post', body.postId)
+        : text;
+    };
+
     const mapped = await this._postsService.mapTypeToPost(
       {
         type: body.type,
@@ -735,9 +834,13 @@ Channels: ${channels.join(', ') || 'Facebook, Instagram, LinkedIn'}`,
           value: [
             {
               content: toEditorHtml(
-                isShortTextChannel(c.providerIdentifier) ? shortText : longText
+                body.captions || body.postId
+                  ? textFor(c.providerIdentifier)
+                  : isShortTextChannel(c.providerIdentifier)
+                  ? shortText
+                  : longText
               ),
-              image: media ? [media] : [],
+              image: media ? [media, ...extraMedia] : [],
             },
           ],
           settings: { ...(QUICK_PUBLISH[c.providerIdentifier] || {}) },
@@ -776,6 +879,17 @@ Channels: ${channels.join(', ') || 'Facebook, Instagram, LinkedIn'}`,
       mapped,
       CreationMethod.WEB
     );
+    // the engine learns from what the client kept and how they edited it
+    if (body.postId) {
+      await this._engineService
+        .markPost(
+          orgId,
+          body.postId,
+          body.type === 'now' ? 'published' : body.type === 'schedule' ? 'scheduled' : 'draft',
+          body.caption
+        )
+        .catch(() => undefined);
+    }
     return {
       type: body.type,
       date: date.toISOString(),

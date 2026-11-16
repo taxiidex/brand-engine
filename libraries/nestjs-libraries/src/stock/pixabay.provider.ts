@@ -57,6 +57,8 @@ export class PixabayProvider implements StockProvider {
         .map((p) => ({
           id: `pixabay-${p.id}`,
           provider: 'pixabay',
+          tags: String(p.tags || ''),
+          preview: p.previewURL || p.webformatURL,
           thumb: p.webformatURL,
           url: p.largeImageURL,
           width: p.imageWidth,

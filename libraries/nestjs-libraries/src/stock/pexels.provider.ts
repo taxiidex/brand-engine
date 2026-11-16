@@ -49,6 +49,8 @@ export class PexelsProvider implements StockProvider {
         .map((p) => ({
           id: `pexels-${p.id}`,
           provider: 'pexels',
+          tags: String(p.alt || ''),
+          preview: p.src.tiny || p.src.medium,
           thumb: p.src.medium,
           url: p.src.large2x,
           width: p.width,

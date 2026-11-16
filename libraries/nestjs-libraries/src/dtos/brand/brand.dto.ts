@@ -137,6 +137,20 @@ export class BrandProfileDto {
   @MaxLength(500)
   @Transform(withHttps)
   ctaUrl?: string;
+
+  // facts the client vouches for: numbers, results, awards, customer quotes
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(12)
+  @IsString({ each: true })
+  @MaxLength(240, { each: true })
+  @Transform(trimList)
+  proofPoints?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  audience?: string;
 }
 
 export class AnalyzeWebsiteDto {

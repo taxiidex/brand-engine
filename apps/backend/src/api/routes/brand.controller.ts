@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
 import { Organization } from '@prisma/client';
 import { ApiTags } from '@nestjs/swagger';
@@ -14,9 +23,18 @@ import {
 } from '@gitroom/nestjs-libraries/dtos/brand/brand.image.dto';
 import { ImageSize } from '@gitroom/nestjs-libraries/render/image.renderer';
 import {
+  ComposeDto,
   GeneratePostDto,
   PublishPostDto,
+  RenderPostDto,
+  TopicStateDto,
+  TopicTitleDto,
 } from '@gitroom/nestjs-libraries/dtos/brand/brand.post.dto';
+import {
+  ComposeInput,
+  EngineService,
+} from '@gitroom/nestjs-libraries/database/prisma/brand/engine.service';
+import { DesignSize } from '@gitroom/nestjs-libraries/render/design.renderer';
 import {
   GenerateBrandVideoDto,
   VideoSearchDto,
@@ -26,7 +44,87 @@ import { VideoSize } from '@gitroom/nestjs-libraries/render/video.renderer';
 @ApiTags('Brand')
 @Controller('/brand')
 export class BrandController {
-  constructor(private _brandService: BrandService) {}
+  constructor(
+    private _brandService: BrandService,
+    private _engineService: EngineService
+  ) {}
+
+  // ---- the content engine ----
+
+  // Writes a new post: topic, angle, vibe, hooks, caption per network
+  @Post('/compose')
+  @Throttle({ default: { limit: 120, ttl: 3600000 } })
+  async compose(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: ComposeDto
+  ) {
+    return this._engineService.compose(org.id, body as ComposeInput);
+  }
+
+  // Designs the image(s) of a composed post
+  @Post('/posts/:id/render')
+  @Throttle({ default: { limit: 240, ttl: 3600000 } })
+  async renderPost(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: RenderPostDto
+  ) {
+    return this._engineService.render(org.id, id, {
+      layout: body.layout,
+      newDesign: body.newDesign,
+      photoUrl: body.photoUrl,
+      size: body.size as DesignSize | undefined,
+      headline: body.headline,
+      subtext: body.subtext,
+    });
+  }
+
+  // The LinkedIn, Instagram and X versions of a composed post
+  @Post('/posts/:id/versions')
+  @Throttle({ default: { limit: 240, ttl: 3600000 } })
+  async postVersions(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._engineService.versions(org.id, id);
+  }
+
+  @Get('/topics')
+  async listTopics(@GetOrgFromRequest() org: Organization) {
+    return this._engineService.listTopics(org.id);
+  }
+
+  @Post('/topics')
+  async addTopic(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: TopicTitleDto
+  ) {
+    return this._engineService.addTopic(org.id, body.title);
+  }
+
+  // Reads the website again and rebuilds the topics taken from it
+  @Post('/topics/refresh')
+  @Throttle({ default: { limit: 10, ttl: 3600000 } })
+  async refreshTopics(@GetOrgFromRequest() org: Organization) {
+    return this._engineService.refreshTopics(org.id);
+  }
+
+  @Put('/topics/:id')
+  async updateTopic(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: TopicStateDto
+  ) {
+    return this._engineService.updateTopic(org.id, id, body);
+  }
+
+  @Delete('/topics/:id')
+  async deleteTopic(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._engineService.deleteTopic(org.id, id);
+  }
 
   @Get('/stock-videos')
   @Throttle({ default: { limit: 60, ttl: 3600000 } })

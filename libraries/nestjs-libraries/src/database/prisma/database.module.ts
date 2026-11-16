@@ -44,6 +44,9 @@ import { ProjectRepository } from '@gitroom/nestjs-libraries/database/prisma/pro
 import { ProjectService } from '@gitroom/nestjs-libraries/database/prisma/projects/project.service';
 import { ImageRenderer } from '@gitroom/nestjs-libraries/render/image.renderer';
 import { VideoRenderer } from '@gitroom/nestjs-libraries/render/video.renderer';
+import { DesignRenderer } from '@gitroom/nestjs-libraries/render/design.renderer';
+import { BrandContentRepository } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.content.repository';
+import { EngineService } from '@gitroom/nestjs-libraries/database/prisma/brand/engine.service';
 import { SetsService } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.service';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
@@ -95,6 +98,9 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     StockService,
     ImageRenderer,
     VideoRenderer,
+    DesignRenderer,
+    BrandContentRepository,
+    EngineService,
     LlmService,
     ProjectRepository,
     ProjectService,
