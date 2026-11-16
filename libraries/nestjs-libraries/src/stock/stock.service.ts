@@ -14,6 +14,9 @@ const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
 // Pixabay's terms ask for 24 hours, and stock searches rarely change
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 300;
+// a picked photo is used again for every preview, so it is kept for a while
+const PHOTO_CACHE_MS = 10 * 60 * 1000;
+const PHOTO_CACHE_MAX = 8;
 
 // Free stock photos from every provider that has a key. Searches are cached
 // so a repeated search never counts against a provider's rate limit.
@@ -27,6 +30,7 @@ export class StockService {
     string,
     { at: number; photos: StockPhoto[] }
   >();
+  private readonly _photos = new Map<string, { at: number; image: Buffer }>();
 
   isConfigured() {
     return this._providers.some((p) => p.isConfigured());
@@ -74,11 +78,23 @@ export class StockService {
   }
 
   // Only photos that live on a provider's own image host are ever downloaded
-  download(url: string) {
-    return downloadImage(
+  async download(url: string) {
+    const cached = this._photos.get(url);
+    if (cached && Date.now() - cached.at < PHOTO_CACHE_MS) {
+      return cached.image;
+    }
+
+    const image = await downloadImage(
       url,
       MAX_PHOTO_BYTES,
       this._providers.flatMap((p) => p.hosts)
     );
+    if (image) {
+      if (this._photos.size >= PHOTO_CACHE_MAX) {
+        this._photos.delete(this._photos.keys().next().value!);
+      }
+      this._photos.set(url, { at: Date.now(), image });
+    }
+    return image;
   }
 }

@@ -65,7 +65,9 @@ const toList = (text: string) =>
 const useBrand = () => {
   const fetch = useFetch();
   const load = useCallback(async () => {
-    return (await fetch('/brand')).json();
+    // no brand yet comes back as an empty body, which is not valid JSON
+    const text = await (await fetch('/brand')).text();
+    return text ? JSON.parse(text) : null;
   }, []);
   return useSWR('brand', load);
 };
