@@ -21,6 +21,13 @@ import {
   VIBES,
 } from '@gitroom/nestjs-libraries/render/design.renderer';
 import { downloadImage } from '@gitroom/nestjs-libraries/render/remote.image';
+import {
+  StoryScene,
+  VIDEO_SIZES,
+  VideoRenderer,
+  VideoSize,
+} from '@gitroom/nestjs-libraries/render/video.renderer';
+import { StockVideo } from '@gitroom/nestjs-libraries/stock/stock.provider';
 import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
 
 // ---------------------------------------------------------------------------
@@ -356,6 +363,8 @@ const LAYOUT_SLOTS: Record<string, string> = {
   meme: 'memeTop and memeBottom (classic two-part meme caption, at most 8 words each)',
   carousel:
     'kicker, items (4 to 6 slides; each "Short title: one-line detail"), subtext (the last slide: an invitation to follow or save)',
+  video:
+    'kicker (1 to 3 words), items (exactly 3 scene lines that carry the story on after the headline, each at most 8 words, with the 1 or 2 key words in *asterisks*), subtext (the closing line on the end card, at most 7 words)',
 };
 
 // the formats (COMPOSE_STYLES in the post DTO) that get a designed image
@@ -381,7 +390,8 @@ export class EngineService {
     private _scraper: BrandScraper,
     private _llm: LlmService,
     private _stock: StockService,
-    private _design: DesignRenderer
+    private _design: DesignRenderer,
+    private _video: VideoRenderer
   ) {}
 
   // ---- topics -------------------------------------------------------------------
@@ -796,7 +806,11 @@ Rules: use only these facts. Never invent numbers, prices, offers, awards, custo
 IMAGE LAYOUT: ${layout}. Fill these fields: ${LAYOUT_SLOTS[layout] || 'kicker, subtext'}. Leave every other image field empty ("" or []).
 CAPTION: 80 to 180 words, short paragraphs, line breaks between them.
 ${channels.length ? `The client is posting to: ${channels.join(', ')}.` : ''}
-No hashtags inside the caption. Hashtags go in the hashtags field.
+No hashtags inside the caption. Hashtags go in the hashtags field.${
+      layout === 'video'
+        ? '\nVIDEO: this is a short video, one scene per line. The photo searches find its video clips, one per scene: describe moving, concrete scenes (people doing things, places, objects in use).'
+        : ''
+    }
 Never use these phrases: ${avoid.join('; ')}
 ${voiceSamples.length ? `Captions this brand approved before (match their voice, do not copy them):\n${voiceSamples.map((v) => `"""${v.slice(0, 600)}"""`).join('\n')}` : ''}`;
     const copywriter = `You are a top social media copywriter who writes posts that stop the scroll and get comments, saves and shares, for ${brand.businessName}.\n${brandBlock}`;
@@ -1230,6 +1244,261 @@ ${postRules}`,
       }
     }
     throw new BadRequestException('We could not design this post. Try "Write another one".');
+  }
+
+  // ---- video ------------------------------------------------------------------------
+
+  // Finds one clip per scene: searches with the post's photo ideas, drops
+  // clips used in recent posts, lets a vision model pick the clips that fit
+  // the scenes best, in order
+  private async pickClips(
+    queries: string[],
+    scenes: string[],
+    context: string,
+    size: VideoSize,
+    history: BrandPost[],
+    avoid: Set<string>
+  ): Promise<StockVideo[]> {
+    const orientation = size === 'landscape' ? 'landscape' : size === 'square' ? 'square' : 'portrait';
+    const recent = new Set(history.slice(0, 20).flatMap((h) => h.clipIds || []));
+    const seen = new Set<string>();
+    const lists = await Promise.all(
+      queries.slice(0, 4).map((q) => this._stock.searchVideos(q, orientation, 8).catch((): StockVideo[] => []))
+    );
+    // one from each search in turn, so every idea is represented
+    const all: StockVideo[] = [];
+    for (let i = 0; i < 8; i++) {
+      for (const list of lists) {
+        const v = list[i];
+        if (v && !seen.has(v.id) && !recent.has(v.id) && !avoid.has(v.id) && v.duration >= 3) {
+          seen.add(v.id);
+          all.push(v);
+        }
+      }
+    }
+    if (!all.length) {
+      return [];
+    }
+    const shortlist = all.slice(0, 12);
+    let order = shortlist.map((_, i) => i);
+    try {
+      const Picks = z.object({
+        picks: z
+          .array(z.number())
+          .describe('for each scene in order, the index of the best clip; never the same clip twice'),
+        unusable: z.array(z.number()).describe('indexes of clips showing readable text, logos or watermarks'),
+      });
+      const result = await this._llm.generateObject({
+        system: 'You pick stock video clips for the scenes of a short social media video. Judge only what is visible in each still frame.',
+        user: `The video: ${context}
+Scenes:
+${scenes.map((s, i) => `${i + 1}. ${s.replace(/\*/g, '')}`).join('\n')}
+The ${shortlist.length} images above are still frames of the clips, index 0 to ${shortlist.length - 1}. Pick the clip that fits each scene best (people and action over empty places, well lit, no visible text or logos).`,
+        schema: Picks,
+        name: 'clipPicks',
+        maxTokens: 1500,
+        images: shortlist.map((v) => v.thumb).filter(Boolean),
+        model: process.env.LLM_VISION_MODEL || this._llm.fastModel(),
+      });
+      if (result?.picks?.length) {
+        const bad = new Set(result.unusable || []);
+        const chosen = result.picks.filter(
+          (i, k, a) => Number.isInteger(i) && i >= 0 && i < shortlist.length && !bad.has(i) && a.indexOf(i) === k
+        );
+        order = [...chosen, ...order.filter((i) => !chosen.includes(i) && !bad.has(i))];
+      }
+    } catch (err) {
+      this._logger.warn(`Clip ranking failed: ${err}`);
+    }
+    return [...order.map((i) => shortlist[i]), ...all.slice(shortlist.length)];
+  }
+
+  // Makes the post's short video: the hook and up to three points, each on
+  // its own clip with the words appearing one by one, then an end card.
+  // Clips are kept on the post, so changing the words keeps the footage.
+  async renderVideo(
+    orgId: string,
+    postId: string,
+    opts: {
+      size?: VideoSize;
+      // other clips than last time
+      newClips?: boolean;
+      // a clip the client picked for the opening scene
+      clipUrl?: string;
+      headline?: string;
+      subtext?: string;
+      items?: string[];
+    }
+  ) {
+    const [brand, post, history] = await Promise.all([
+      this._brandRepository.getBrand(orgId),
+      this._content.getPost(orgId, postId),
+      this._content.recentPosts(orgId, 30),
+    ]);
+    if (!brand || !post) {
+      throw new BadRequestException('This post no longer exists. Create a new one.');
+    }
+    const size: VideoSize = opts.size || ((post.size || 'story') in VIDEO_SIZES ? (post.size as VideoSize) : 'story');
+    const { width, height } = VIDEO_SIZES[size];
+
+    // the client's changes to the words
+    const slots = { ...((post.slots as any) || {}) } as Slots;
+    if (opts.headline?.trim()) {
+      post.headline = opts.headline.trim();
+    }
+    if (opts.subtext !== undefined) {
+      slots.subtext = opts.subtext.trim() || undefined;
+    }
+    if (opts.items) {
+      slots.items = opts.items.map((i) => i.trim()).filter(Boolean).slice(0, 3);
+    }
+    if (opts.headline !== undefined || opts.subtext !== undefined || opts.items) {
+      await this._content.updatePost(orgId, post.id, { headline: post.headline, slots: slots as any });
+    }
+
+    const points = (slots.items || []).filter((i) => i.trim()).slice(0, 3);
+    const lines = [post.headline, ...(points.length ? points : slots.subtext ? [slots.subtext] : [])];
+    const endLine = points.length && slots.subtext ? slots.subtext : `Follow ${brand.businessName} for more`;
+    const others = history.filter((h) => h.id !== post.id);
+
+    // clips: the same as before unless asked otherwise
+    const clips: { buffer: Buffer; video?: StockVideo; url: string }[] = [];
+    const prevUrls = post.clipUrls || [];
+    const prevIds = post.clipIds || [];
+    const prevCredits = ((post.clipCredits as any) || []) as ({ name: string; link: string } | null)[];
+    const keep = !opts.newClips ? prevUrls : [];
+    const download = async (url: string) => this._stock.downloadVideo(url).catch((): Buffer | undefined => undefined);
+    if (opts.clipUrl) {
+      const buffer = await download(opts.clipUrl);
+      if (!buffer) {
+        throw new BadRequestException('We could not use that clip. Pick another one.');
+      }
+      clips.push({ buffer, url: opts.clipUrl });
+    }
+    const needed = lines.length;
+    if (keep.length >= needed) {
+      const urls = keep.slice(clips.length, needed);
+      const buffers = await Promise.all(urls.map(download));
+      buffers.forEach((buffer, i) => buffer && clips.push({ buffer, url: urls[i] }));
+    }
+    let picked: StockVideo[] = [];
+    if (clips.length < needed && this._stock.isConfigured()) {
+      const avoid = new Set<string>(opts.newClips ? post.clipIds || [] : []);
+      picked = await this.pickClips(
+        post.photoQueries.length ? post.photoQueries : [post.topic],
+        lines,
+        `${post.headline.replace(/\*/g, '')}. Topic: ${post.topic}. Brand: ${brand.businessName}, ${brand.niche}.`,
+        size,
+        others,
+        avoid
+      );
+      for (const video of picked) {
+        if (clips.length >= needed) {
+          break;
+        }
+        if (clips.some((c) => c.url === video.url)) {
+          continue;
+        }
+        const buffer = await download(video.url);
+        if (buffer) {
+          clips.push({ buffer, video, url: video.url });
+        }
+      }
+    }
+    // fewer clips than scenes: reuse them in turn
+    if (clips.length && clips.length < needed) {
+      const have = clips.slice();
+      while (clips.length < needed) {
+        clips.push(have[clips.length % have.length]);
+      }
+    }
+
+    const vibe = (VIBES as readonly string[]).includes(post.vibe) ? (post.vibe as Vibe) : 'professional';
+    const palettes = this._design.palettes(brand.primaryColor, brand.accentColor);
+    const palette: Palette = palettes.find((p) => p.id === post.paletteId) || palettes[0];
+    const logo = brand.logoUrl ? await downloadImage(brand.logoUrl, 3 * 1024 * 1024) : undefined;
+    const host = (() => {
+      try {
+        return new URL(brand.ctaUrl || brand.websiteUrl || '').hostname.replace(/^www\./, '');
+      } catch (err) {
+        return undefined;
+      }
+    })();
+    const frames = await this._design.videoFrames({
+      width,
+      height,
+      vibe,
+      palette,
+      brand: {
+        businessName: brand.businessName,
+        primaryColor: brand.primaryColor,
+        accentColor: brand.accentColor,
+        ctaText: brand.ctaText,
+      },
+      host,
+      logo,
+      seed: Math.floor(Math.random() * 1e6),
+      kicker: slots.kicker,
+      lines,
+      endLine,
+      backdrops: !clips.length,
+    });
+
+    const pans: StoryScene['pan'][] = ['right', 'up', 'left', 'down'];
+    const layersOf = (steps: { png: Buffer; at: number; x: number; y: number }[]) =>
+      steps.map((st, k) => ({ png: st.png, from: st.at, to: steps[k + 1]?.at, x: st.x, y: st.y }));
+    const scenes: StoryScene[] = frames.scenes.map((sc, i) => ({
+      clip: clips[i]?.buffer,
+      still: clips[i] ? undefined : sc.backdrop,
+      seconds: sc.seconds,
+      pan: pans[i % pans.length],
+      layers: [{ png: sc.base, from: 0, x: 0, y: 0 }, ...layersOf(sc.steps)],
+    }));
+    scenes.push({ still: frames.end.still, seconds: frames.end.seconds, layers: layersOf(frames.end.steps) });
+
+    let rendered: { buffer: Buffer; seconds: number };
+    try {
+      rendered = await this._video.renderStory({
+        width,
+        height,
+        scenes,
+        transition: frames.transition,
+        transitionSeconds: 0.45,
+      });
+    } catch (err) {
+      this._logger.warn(`Story video failed: ${err}`);
+      throw new BadRequestException('We could not make the video. Try other clips.');
+    }
+    const stored = await this.storage.uploadFile({
+      buffer: rendered.buffer,
+      originalname: 'video.mp4',
+      mimetype: 'video/mp4',
+      size: rendered.buffer.length,
+    } as any);
+
+    const used = clips.slice(0, needed);
+    const usedCredits = used.map((c) => (c.video ? c.video.credit : prevCredits[prevUrls.indexOf(c.url)] || null));
+    const uniqueUrls = Array.from(new Set(used.map((c) => c.url)));
+    await this._content.updatePost(orgId, post.id, {
+      size,
+      clipUrls: used.map((c) => c.url),
+      clipIds: used.map((c) => c.video?.id || prevIds[prevUrls.indexOf(c.url)] || '').filter(Boolean),
+      clipCredits: usedCredits as any,
+      videoPath: stored.path as string,
+    });
+    const seenNames = new Set<string>();
+    return {
+      url: stored.path as string,
+      size,
+      width,
+      height,
+      seconds: rendered.seconds,
+      scenes: lines.length,
+      clips: uniqueUrls.length,
+      credits: (usedCredits.filter(Boolean) as { name: string; link: string }[]).filter((c) =>
+        seenNames.has(c.name) ? false : (seenNames.add(c.name), true)
+      ),
+    };
   }
 
   // ---- versions per network ------------------------------------------------------------

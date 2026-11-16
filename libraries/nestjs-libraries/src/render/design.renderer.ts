@@ -511,6 +511,60 @@ interface Scene {
 
 export class LayoutDoesNotFit extends Error {}
 
+// ---- video scenes -------------------------------------------------------------
+
+export interface VideoFramesInput {
+  width: number;
+  height: number;
+  vibe: Vibe;
+  palette: Palette;
+  brand: DesignBrand;
+  // the website shown on the end card
+  host?: string;
+  logo?: Buffer;
+  seed: number;
+  kicker?: string;
+  // the hook first, then the points; *words* are emphasised
+  lines: string[];
+  endLine: string;
+  // no stock clips: each line gets a coloured backdrop instead
+  backdrops?: boolean;
+}
+
+// a transparent image laid over the video from a moment on; x and y place
+// it when it is smaller than the frame
+export interface VideoStep {
+  png: Buffer;
+  at: number;
+  x: number;
+  y: number;
+}
+
+export interface VideoFrames {
+  treatment: 'shadow' | 'box' | 'card';
+  transition: string;
+  scenes: { base: Buffer; steps: VideoStep[]; seconds: number; backdrop?: Buffer }[];
+  end: { still: Buffer; steps: VideoStep[]; seconds: number };
+}
+
+// how the words sit on the footage, per feel
+const TREATMENTS: Record<Vibe, VideoFrames['treatment'][]> = {
+  professional: ['card', 'shadow'],
+  bold: ['box', 'shadow'],
+  funny: ['box'],
+  aesthetic: ['card', 'shadow'],
+  inspiring: ['shadow', 'box'],
+};
+// FFmpeg xfade transitions between scenes, per feel
+const TRANSITIONS: Record<Vibe, string[]> = {
+  professional: ['fade', 'smoothleft'],
+  bold: ['slideleft', 'wipeleft', 'slideup'],
+  funny: ['circleopen', 'slideup', 'radial'],
+  aesthetic: ['fade', 'fadeblack', 'dissolve'],
+  inspiring: ['smoothup', 'fade'],
+};
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
 @Injectable()
 export class DesignRenderer {
   constructor() {
@@ -1661,5 +1715,294 @@ export class DesignRenderer {
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
     }
+  }
+
+  // ---- video ------------------------------------------------------------------
+
+  // The pictures of a short video: for each line a base layer (shade, story
+  // progress, brand badge) and the words appearing one by one, then an end
+  // card with the logo, a closing line and the call to action
+  async videoFrames(input: VideoFramesInput): Promise<VideoFrames> {
+    const { width: w, height: h } = input;
+    const logo = await decode(input.logo);
+    const type = this.typeSetFor(input.vibe, input.seed);
+    const rand = rng(input.seed);
+    const pick = <T>(list: T[]) => list[Math.floor(rand() * list.length)] || list[0];
+    const treatment = pick(TREATMENTS[input.vibe] || TREATMENTS.professional);
+    const transition = pick(TRANSITIONS[input.vibe] || ['fade']);
+    const u = Math.sqrt(w * h) / 1080;
+    const story = h / w > 1.6;
+    // Reels and Stories cover the top ~11% and the bottom ~20% with their own UI
+    const top = story ? Math.round(h * 0.11) : Math.round(h * 0.07);
+    const bottom = story ? Math.round(h * 0.8) : Math.round(h * 0.93);
+    const m = Math.round(w * 0.08);
+    const pal = input.palette;
+    const scene = (ctx: Ctx): Scene => ({
+      ctx,
+      w,
+      h,
+      u,
+      m,
+      top,
+      bottom,
+      pal,
+      type,
+      brand: input.brand,
+      logo,
+      photo: null,
+      rand,
+      story,
+    });
+    const display = this.fontFor(scene(createCanvas(8, 8).getContext('2d')), true);
+    // an emphasis colour that reads on dark footage
+    const onDark =
+      [pal.accent, input.brand.accentColor, input.brand.primaryColor]
+        .map((c) => hex(c, '#FFD84D'))
+        .find((c) => contrast(c, '#000000') >= 6) || '#FFD84D';
+    const cardEm = contrast(pal.accent, pal.surface) >= 3 ? pal.accent : pal.surfaceInk;
+    // the highlight inside a white caption box must stand out from white
+    const boxEmBg =
+      [pal.accent, input.brand.accentColor, input.brand.primaryColor]
+        .map((c) => hex(c, '#111111'))
+        .find((c) => contrast(c, '#FFFFFF') >= 2.5) || '#111111';
+    const boxEmInk = inkFor(boxEmBg);
+
+    const total = input.lines.filter((l) => l.trim()).length;
+    const badge = (ctx: Ctx, y: number) => {
+      let x = m;
+      const box = 64 * u;
+      if (logo) {
+        ctx.fillStyle = '#FFFFFF';
+        rounded(ctx, x, y, box, box, 16 * u);
+        ctx.fill();
+        const pad = 9 * u;
+        const sc = Math.min((box - pad * 2) / logo.width, (box - pad * 2) / logo.height);
+        ctx.drawImage(logo, x + (box - logo.width * sc) / 2, y + (box - logo.height * sc) / 2, logo.width * sc, logo.height * sc);
+        x += box + 16 * u;
+      }
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowBlur = 12 * u;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = `700 ${30 * u}px "Poppins", Inter, ${FALLBACK}`;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(input.brand.businessName.slice(0, 32), x, y + box / 2);
+      ctx.restore();
+      ctx.textBaseline = 'alphabetic';
+    };
+
+    const scenes: VideoFrames['scenes'] = [];
+    input.lines
+      .filter((l) => l.trim())
+      .forEach((line, index) => {
+        const hook = index === 0;
+        const words = parseWords(line, type.upper);
+        const seconds = clamp((hook ? 2.3 : 2) + words.length * 0.2, hook ? 3.2 : 2.8, hook ? 4.6 : 4.2);
+        const lineHeight = treatment === 'box' ? 1.32 : type.upper ? 1.04 : 1.12;
+        const inset = treatment === 'card' ? 52 * u : treatment === 'box' ? 26 * u : 0;
+        const areaTop = top + 120 * u;
+        const o: FitOptions = {
+          font: display,
+          maxWidth: w - 2 * m - 2 * inset,
+          maxHeight: (bottom - areaTop) * (hook ? 0.62 : 0.5),
+          // wide frames have room for bigger words
+          maxSize: (hook ? 128 : 100) * u * (w > h ? 1.35 : 1),
+          minSize: 40 * u,
+          lineHeight,
+          tracking: type.tracking,
+        };
+        const measure = createCanvas(8, 8).getContext('2d');
+        const f = fitWords(measure, words, o) || fitWords(measure, words, { ...o, minSize: 28 * u });
+        if (!f) {
+          throw new LayoutDoesNotFit('video line');
+        }
+        const padY = treatment === 'card' ? 46 * u : 0;
+        const blockH = f.height + padY * 2;
+        const centre = areaTop + (bottom - areaTop) * (hook ? 0.42 : 0.55);
+        const blockY = Math.round(centre - blockH / 2);
+        // the region the words are drawn in, with room for shadows and boxes
+        const margin = 40 * u;
+        const rx = Math.max(0, Math.round(m - margin));
+        const ry = Math.max(0, Math.round(blockY - margin));
+        const rw = Math.min(w - rx, Math.round(w - 2 * m + 2 * margin));
+        const rh = Math.min(h - ry, Math.round(blockH + 2 * margin));
+
+        // base: shade, progress, badge (and the label on the hook)
+        const baseCanvas = createCanvas(w, h);
+        const b = baseCanvas.getContext('2d');
+        b.fillStyle = `rgba(0,0,0,${treatment === 'shadow' ? 0.34 : 0.16})`;
+        b.fillRect(0, 0, w, h);
+        const tg = b.createLinearGradient(0, 0, 0, top + 160 * u);
+        tg.addColorStop(0, 'rgba(0,0,0,0.5)');
+        tg.addColorStop(1, 'rgba(0,0,0,0)');
+        b.fillStyle = tg;
+        b.fillRect(0, 0, w, top + 160 * u);
+        const gap = 10 * u;
+        const segW = (w - 2 * m - gap * (total - 1)) / total;
+        for (let i = 0; i < total; i++) {
+          b.fillStyle = i <= index ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)';
+          rounded(b, m + i * (segW + gap), top - 34 * u, segW, 7 * u, 3.5 * u);
+          b.fill();
+        }
+        badge(b, top);
+        if (hook && input.kicker?.trim()) {
+          this.kicker(scene(b), input.kicker, m, Math.max(top + 100 * u, blockY - 90 * u), pal.accent, true);
+        }
+
+        // one picture per word (two per step when the line is long)
+        const per = words.length > 10 ? 2 : 1;
+        const counts: number[] = [];
+        for (let c = per; c < words.length; c += per) {
+          counts.push(c);
+        }
+        counts.push(words.length);
+        const start = 0.3;
+        const interval = Math.min(0.2, (seconds * 0.42) / counts.length);
+        const steps: VideoStep[] = counts.map((count, k) => {
+          const canvas = createCanvas(rw, rh);
+          const ctx = canvas.getContext('2d');
+          ctx.translate(-rx, -ry);
+          if (treatment === 'card') {
+            ctx.save();
+            ctx.globalAlpha = 0.94;
+            ctx.fillStyle = pal.surface;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 30 * u;
+            rounded(ctx, m, blockY, w - 2 * m, blockH, 30 * u);
+            ctx.fill();
+            ctx.restore();
+          }
+          let shown = 0;
+          let y = blockY + padY;
+          for (const ln of f.lines) {
+            ctx.font = o.font(f.size);
+            const space = ctx.measureText(' ').width;
+            const widths = ln.map((wd) => wordWidth(ctx, wd, o, f.size));
+            const lineW = widths.reduce((a, c) => a + c, 0) + space * (ln.length - 1);
+            let x = (w - lineW) / 2;
+            const visible = Math.max(0, Math.min(ln.length, count - shown));
+            if (treatment === 'box' && visible) {
+              const vw = widths.slice(0, visible).reduce((a, c) => a + c, 0) + space * (visible - 1);
+              ctx.fillStyle = '#FFFFFF';
+              rounded(ctx, x - inset, y + f.size * 0.02, vw + inset * 2, f.size * 1.22, 14 * u);
+              ctx.fill();
+            }
+            const baseline = y + f.size * (treatment === 'box' ? 0.98 : 0.92);
+            ln.forEach((wd, i) => {
+              if (i >= visible) {
+                return;
+              }
+              ctx.save();
+              ctx.font = o.font(f.size, wd.em && type.emphasis === 'italic');
+              ctx.letterSpacing = `${(o.tracking || 0) * f.size}px`;
+              if (treatment === 'shadow') {
+                ctx.shadowColor = 'rgba(0,0,0,0.65)';
+                ctx.shadowBlur = 22 * u;
+                ctx.shadowOffsetY = 4 * u;
+                ctx.fillStyle = wd.em ? onDark : '#FFFFFF';
+              } else if (treatment === 'box') {
+                if (wd.em) {
+                  ctx.fillStyle = boxEmBg;
+                  rounded(ctx, x - 8 * u, y + f.size * 0.1, widths[i] + 16 * u, f.size * 1.06, 10 * u);
+                  ctx.fill();
+                  ctx.fillStyle = boxEmInk;
+                } else {
+                  ctx.fillStyle = '#111111';
+                }
+              } else {
+                ctx.fillStyle = wd.em ? cardEm : pal.surfaceInk;
+              }
+              ctx.fillText(wd.text, x, baseline);
+              if (wd.em && treatment === 'card' && cardEm === pal.surfaceInk) {
+                ctx.fillRect(x, baseline + f.size * 0.08, widths[i], Math.max(4, f.size * 0.07));
+              }
+              ctx.restore();
+              x += widths[i] + space;
+            });
+            shown += ln.length;
+            y += f.size * lineHeight;
+          }
+          return { png: canvas.toBuffer('image/png'), at: start + k * interval, x: rx, y: ry };
+        });
+
+        let backdrop: Buffer | undefined;
+        if (input.backdrops) {
+          const bc = createCanvas(w, h);
+          this.background(scene(bc.getContext('2d')));
+          backdrop = bc.toBuffer('image/png');
+        }
+        scenes.push({ base: baseCanvas.toBuffer('image/png'), steps, seconds, backdrop });
+      });
+    if (!scenes.length) {
+      throw new LayoutDoesNotFit('no video lines');
+    }
+
+    // end card, built up in three beats: logo, line, button and website
+    const endCard = (stage: number) => {
+      const canvas = createCanvas(w, h);
+      const ctx = canvas.getContext('2d');
+      const s = scene(ctx);
+      this.background(s);
+      const logoTop = story ? h * 0.27 : h * 0.18;
+      const box = 190 * u;
+      let below = logoTop + box;
+      if (stage >= 0) {
+        if (logo) {
+          ctx.fillStyle = '#FFFFFF';
+          rounded(ctx, (w - box) / 2, logoTop, box, box, 40 * u);
+          ctx.fill();
+          const sc = Math.min((box * 0.72) / logo.width, (box * 0.72) / logo.height);
+          ctx.drawImage(logo, (w - logo.width * sc) / 2, logoTop + (box - logo.height * sc) / 2, logo.width * sc, logo.height * sc);
+        } else {
+          const name = this.headline(s, input.brand.businessName, { x: m, y: logoTop, w: w - 2 * m, h: box }, { align: 'center', maxSize: 90 * u, minSize: 24 * u, vertical: 'center' });
+          below = name.bottom;
+        }
+      }
+      if (stage >= 1) {
+        let head: { bottom: number };
+        try {
+          head = this.headline(s, input.endLine, { x: m, y: below + 60 * u, w: w - 2 * m, h: h * 0.22 }, { align: 'center', maxSize: 84 * u });
+        } catch (err) {
+          head = this.headline(s, `Follow ${input.brand.businessName}`, { x: m, y: below + 60 * u, w: w - 2 * m, h: h * 0.22 }, { align: 'center', maxSize: 84 * u, minSize: 24 * u });
+        }
+        below = head.bottom;
+      }
+      if (stage >= 2) {
+        const cta = input.brand.ctaText?.trim();
+        let y = below + 56 * u;
+        if (cta) {
+          ctx.font = `700 ${36 * u}px "Poppins", Inter, ${FALLBACK}`;
+          const bw = Math.min(ctx.measureText(cta).width + 96 * u, w - 2 * m);
+          ctx.fillStyle = pal.accent;
+          rounded(ctx, (w - bw) / 2, y, bw, 88 * u, 44 * u);
+          ctx.fill();
+          ctx.fillStyle = pal.accentInk;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(cta, w / 2, y + 46 * u);
+          y += 88 * u;
+        }
+        if (input.host) {
+          ctx.font = `600 ${36 * u}px Inter, ${FALLBACK}`;
+          ctx.fillStyle = pal.ink;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(input.host, w / 2, y + 56 * u);
+        }
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+      return canvas.toBuffer('image/png');
+    };
+    const end = {
+      still: endCard(-1),
+      steps: [
+        { png: endCard(0), at: 0.15, x: 0, y: 0 },
+        { png: endCard(1), at: 0.55, x: 0, y: 0 },
+        { png: endCard(2), at: 1.0, x: 0, y: 0 },
+      ],
+      seconds: 3.6,
+    };
+    return { treatment, transition, scenes, end };
   }
 }

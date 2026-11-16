@@ -27,6 +27,7 @@ import {
   GeneratePostDto,
   PublishPostDto,
   RenderPostDto,
+  RenderVideoDto,
   TopicStateDto,
   TopicTitleDto,
 } from '@gitroom/nestjs-libraries/dtos/brand/brand.post.dto';
@@ -76,6 +77,25 @@ export class BrandController {
       size: body.size as DesignSize | undefined,
       headline: body.headline,
       subtext: body.subtext,
+    });
+  }
+
+  // The short video of a composed post: scenes on stock clips, words that
+  // appear one by one, an end card. Heavy, so limited like /video.
+  @Post('/posts/:id/video')
+  @Throttle({ default: { limit: 30, ttl: 3600000 } })
+  async renderPostVideo(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: RenderVideoDto
+  ) {
+    return this._engineService.renderVideo(org.id, id, {
+      size: body.size as VideoSize | undefined,
+      newClips: body.newClips,
+      clipUrl: body.clipUrl,
+      headline: body.headline,
+      subtext: body.subtext,
+      items: body.items,
     });
   }
 

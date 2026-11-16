@@ -768,6 +768,10 @@ model BrandPost {
   photoId        String?
   photoAuthor    String?
   photoUrl       String?
+  clipUrls       String[] @default([])
+  clipIds        String[] @default([])
+  clipCredits    Json?
+  videoPath      String?
   status         String       @default("generated")
   publishedCaption String?
   size           String?

@@ -108,6 +108,7 @@ interface Composed {
   altText: string;
   flags: string[];
   photoQueries: string[];
+  slots: { items?: string[]; subtext?: string; kicker?: string };
 }
 
 interface Design {
@@ -121,8 +122,8 @@ interface Design {
 interface Video {
   url: string;
   size: string;
-  videoUrl: string;
-  credit: { name: string; link: string } | null;
+  seconds: number;
+  credits: { name: string; link: string }[];
 }
 
 const tomorrowAtTen = () => {
@@ -192,6 +193,8 @@ export const CreatePost: FC = () => {
   const [versions, setVersions] = useState<Record<string, string> | null>(null);
   const [network, setNetwork] = useState('facebook');
   const [imageText, setImageText] = useState({ headline: '', subtext: '' });
+  // the lines of the video's middle scenes
+  const [sceneLines, setSceneLines] = useState<string[]>([]);
 
   const [publishing, setPublishing] = useState<'' | 'now' | 'schedule' | 'draft'>('');
   const [when, setWhen] = useState(tomorrowAtTen());
@@ -289,25 +292,26 @@ export const CreatePost: FC = () => {
     []
   );
 
+  // The short video: scenes on stock clips with the words appearing one by
+  // one, then an end card. Clips stay the same when only the words change.
   const makeVideo = useCallback(
     async (
-      p: Composed,
-      videoSize: string,
-      words: { headline: string; subtext: string },
-      videoUrl?: string,
+      id: string,
+      opts: {
+        size?: string;
+        newClips?: boolean;
+        clipUrl?: string;
+        headline?: string;
+        subtext?: string;
+        items?: string[];
+      } = {},
       pickedCredit?: { name: string; link: string } | null
     ) => {
       setDesigning(true);
       setDesignFailed(false);
       try {
-        const res = await call('/brand/video', {
-          headline: plain(words.headline) || brand?.businessName || ' ',
-          subtext: words.subtext || undefined,
-          size: videoSize,
-          videoQuery: p.photoQueries[0] || undefined,
-          videoUrl: videoUrl || undefined,
-        });
-        if (current.current !== p.id) {
+        const res = await call(`/brand/posts/${id}/video`, opts);
+        if (current.current !== id) {
           return;
         }
         if (!res?.ok) {
@@ -321,23 +325,18 @@ export const CreatePost: FC = () => {
           return;
         }
         const data = await res.json();
-        setVideo((old) => ({
-          url: data.url,
-          size: videoSize,
-          videoUrl: data.videoUrl,
-          credit:
-            data.videoCredit ??
-            pickedCredit ??
-            (videoUrl && videoUrl === old?.videoUrl ? old?.credit : null) ??
-            null,
-        }));
+        const credits: { name: string; link: string }[] = [...(data.credits || [])];
+        if (pickedCredit && !credits.some((c) => c.name === pickedCredit.name)) {
+          credits.unshift(pickedCredit);
+        }
+        setVideo({ url: data.url, size: data.size, seconds: data.seconds, credits });
       } finally {
-        if (current.current === p.id) {
+        if (current.current === id) {
           setDesigning(false);
         }
       }
     },
-    [brand]
+    []
   );
 
   const write = useCallback(async () => {
@@ -379,13 +378,14 @@ export const CreatePost: FC = () => {
       current.current = data.id;
       setPost(data);
       setImageText({ headline: data.headline, subtext: data.subtext || '' });
+      setSceneLines((data.slots?.items || []).slice(0, 3));
       setNetwork('facebook');
       setPhotoQuery(data.photoQueries[0] || '');
       loadVersions(data.id);
       if (DESIGNED.includes(format)) {
         makeDesign(data.id);
       } else if (format === 'video') {
-        makeVideo(data, size, { headline: data.headline, subtext: data.subtext });
+        makeVideo(data.id, { size });
       }
     } finally {
       setWriting(false);
@@ -486,9 +486,12 @@ export const CreatePost: FC = () => {
   const isVideo = post?.style === 'video';
   const isText = post?.style === 'text';
   const hasPhoto = !!design && PHOTO_LAYOUTS.includes(design.layout);
+  const savedLines = (post?.slots?.items || []).slice(0, 3);
   const imageWordsChanged =
     !!post &&
-    (imageText.headline !== post.headline || imageText.subtext !== (post.subtext || ''));
+    (imageText.headline !== post.headline ||
+      imageText.subtext !== (post.subtext || '') ||
+      (isVideo && sceneLines.join('|') !== savedLines.join('|')));
   const shortLength = textFor('short').length;
 
   return (
@@ -735,14 +738,14 @@ export const CreatePost: FC = () => {
                         <Waiting
                           steps={
                             isVideo
-                              ? ['Finding a clip...', 'Putting your words and logo on it...', 'Rendering the video...']
+                              ? ['Finding a clip for each scene...', 'Animating your words...', 'Adding your end card...', 'Rendering the video...']
                               : ['Choosing a design...', 'Finding the right photo...', 'Putting it together...']
                           }
                           note={
                             retrying
                               ? 'Something went wrong, so we are trying again...'
                               : isVideo
-                              ? 'This takes about 30 seconds.'
+                              ? 'This takes about 30 seconds. Read the caption while you wait.'
                               : 'Read the caption while you wait.'
                           }
                         />
@@ -756,7 +759,7 @@ export const CreatePost: FC = () => {
                               secondary={true}
                               onClick={() =>
                                 isVideo
-                                  ? makeVideo(post, size, imageText)
+                                  ? makeVideo(post.id, { size })
                                   : makeDesign(post.id)
                               }
                               className="rounded-[8px]"
@@ -769,33 +772,49 @@ export const CreatePost: FC = () => {
                     </div>
                   )}
 
-                  {(design?.photoCredit || video?.credit) && (
+                  {!isVideo && design?.photoCredit && (
                     <div className="text-[12px] text-textItemBlur">
-                      {isVideo ? 'Video' : 'Photo'} by{' '}
+                      Photo by{' '}
                       <a
-                        href={(isVideo ? video?.credit : design?.photoCredit)?.link}
+                        href={design.photoCredit.link}
                         target="_blank"
                         rel="noreferrer"
                         className="underline"
                       >
-                        {(isVideo ? video?.credit : design?.photoCredit)?.name}
+                        {design.photoCredit.name}
                       </a>
+                    </div>
+                  )}
+                  {isVideo && video && (
+                    <div className="text-[12px] text-textItemBlur">
+                      {video.seconds} seconds.
+                      {!!video.credits.length && ' Clips by '}
+                      {video.credits.map((c, i) => (
+                        <React.Fragment key={c.name}>
+                          {i > 0 && (i === video.credits.length - 1 ? ' and ' : ', ')}
+                          <a href={c.link} target="_blank" rel="noreferrer" className="underline">
+                            {c.name}
+                          </a>
+                        </React.Fragment>
+                      ))}
                     </div>
                   )}
 
                   {(design || video) && (
                     <div className="flex gap-[8px] flex-wrap">
-                      {!isVideo && (
-                        <Button
-                          secondary={true}
-                          onClick={() => makeDesign(post.id, { newDesign: true })}
-                          loading={designing}
-                          disabled={busy}
-                          className="rounded-[8px]"
-                        >
-                          Try another design
-                        </Button>
-                      )}
+                      <Button
+                        secondary={true}
+                        onClick={() =>
+                          isVideo
+                            ? makeVideo(post.id, { newClips: true })
+                            : makeDesign(post.id, { newDesign: true })
+                        }
+                        loading={designing}
+                        disabled={busy}
+                        className="rounded-[8px]"
+                      >
+                        {isVideo ? 'Try other clips' : 'Try another design'}
+                      </Button>
                       {isVideo && video ? (
                         <a
                           href={video.url}
@@ -819,8 +838,8 @@ export const CreatePost: FC = () => {
                   )}
 
                   <Field
-                    label={isVideo ? 'Words on the video' : 'Words on the image'}
-                    hint={isVideo ? undefined : 'Put *stars* around words to highlight them.'}
+                    label={isVideo ? 'Opening line' : 'Words on the image'}
+                    hint="Put *stars* around words to highlight them."
                   >
                     <input
                       value={imageText.headline}
@@ -829,7 +848,20 @@ export const CreatePost: FC = () => {
                       className={inputClass}
                     />
                   </Field>
-                  <Field label="Smaller line (optional)">
+                  {isVideo &&
+                    sceneLines.map((line, i) => (
+                      <Field key={i} label={`Scene ${i + 2}`}>
+                        <input
+                          value={line}
+                          onChange={(e) =>
+                            setSceneLines(sceneLines.map((l, k) => (k === i ? e.target.value : l)))
+                          }
+                          maxLength={120}
+                          className={inputClass}
+                        />
+                      </Field>
+                    ))}
+                  <Field label={isVideo ? 'Line on the end card' : 'Smaller line (optional)'}>
                     <input
                       value={imageText.subtext}
                       onChange={(e) => setImageText({ ...imageText, subtext: e.target.value })}
@@ -841,10 +873,21 @@ export const CreatePost: FC = () => {
                     <Button
                       onClick={() => {
                         setPost((p) =>
-                          p ? { ...p, headline: imageText.headline, subtext: imageText.subtext } : p
+                          p
+                            ? {
+                                ...p,
+                                headline: imageText.headline,
+                                subtext: imageText.subtext,
+                                slots: { ...p.slots, items: sceneLines, subtext: imageText.subtext },
+                              }
+                            : p
                         );
                         if (isVideo) {
-                          makeVideo(post, video?.size || size, imageText, video?.videoUrl);
+                          makeVideo(post.id, {
+                            headline: imageText.headline,
+                            subtext: imageText.subtext,
+                            items: sceneLines,
+                          });
                         } else {
                           makeDesign(post.id, {
                             headline: imageText.headline,
@@ -863,7 +906,7 @@ export const CreatePost: FC = () => {
                   {(hasPhoto || (isVideo && video)) && (
                     <div className="flex flex-col gap-[8px]">
                       <div className="text-[14px] font-[500]">
-                        Change the {isVideo ? 'clip' : 'photo'}
+                        {isVideo ? 'Pick the clip for the opening scene' : 'Change the photo'}
                       </div>
                       <div className="flex gap-[8px]">
                         <input
@@ -897,7 +940,7 @@ export const CreatePost: FC = () => {
                               disabled={busy}
                               onClick={() =>
                                 isVideo
-                                  ? makeVideo(post, video?.size || size, imageText, r.url, r.credit)
+                                  ? makeVideo(post.id, { clipUrl: r.url }, r.credit)
                                   : makeDesign(post.id, { photoUrl: r.url }, r.credit)
                               }
                               className="aspect-square rounded-[6px] overflow-hidden border-2 border-transparent hover:border-newTableBorder relative"

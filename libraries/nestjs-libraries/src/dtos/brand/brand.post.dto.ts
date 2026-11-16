@@ -25,6 +25,8 @@ import {
   LAYOUTS,
   VIBES,
 } from '@gitroom/nestjs-libraries/render/design.renderer';
+import { VIDEO_SIZES } from '@gitroom/nestjs-libraries/render/video.renderer';
+import { STOCK_VIDEO_URL } from '@gitroom/nestjs-libraries/dtos/brand/brand.video.dto';
 
 // each version is a string of reasonable length
 @ValidatorConstraint({ name: 'CaptionVersions' })
@@ -238,6 +240,45 @@ export class RenderPostDto {
   @IsString()
   @MaxLength(200)
   subtext?: string;
+}
+
+// Makes (or remakes) the short video of a composed post
+export class RenderVideoDto {
+  @IsOptional()
+  @IsIn(Object.keys(VIDEO_SIZES))
+  size?: string;
+
+  // other clips than last time
+  @IsOptional()
+  @IsBoolean()
+  newClips?: boolean;
+
+  // a clip the client picked for the opening scene
+  @IsOptional()
+  @IsUrl({ require_protocol: true, protocols: ['https'] })
+  @Matches(STOCK_VIDEO_URL, {
+    message: 'clipUrl must be a clip from the stock video search',
+  })
+  @MaxLength(600)
+  clipUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(220)
+  headline?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  subtext?: string;
+
+  // the scene lines after the headline
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @MaxLength(120, { each: true })
+  items?: string[];
 }
 
 export class TopicTitleDto {
