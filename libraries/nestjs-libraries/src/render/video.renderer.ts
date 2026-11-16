@@ -170,8 +170,10 @@ export class VideoRenderer {
           if (scene.clip) {
             const file = join(dir, `clip-${i}.mp4`);
             await writeFile(file, scene.clip);
-            // a short clip is looped to fill its scene
-            args.push('-stream_loop', '-1', '-protocol_whitelist', 'file', '-i', file);
+            // a short clip is looped to fill its scene, and only the scene's
+            // length is read: an endless input would be decoded to the end
+            // of the whole video
+            args.push('-stream_loop', '-1', '-t', (scene.seconds + 0.3).toFixed(2), '-protocol_whitelist', 'file', '-i', file);
           } else {
             const file = join(dir, `still-${i}.png`);
             await writeFile(file, scene.still!);

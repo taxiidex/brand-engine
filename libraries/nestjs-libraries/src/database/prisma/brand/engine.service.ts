@@ -1289,14 +1289,14 @@ ${postRules}`,
         unusable: z.array(z.number()).describe('indexes of clips showing readable text, logos or watermarks'),
       });
       const result = await this._llm.generateObject({
-        system: 'You pick stock video clips for the scenes of a short social media video. Judge only what is visible in each still frame.',
+        system: 'You pick stock video clips for the scenes of a short social media video. Judge only what is visible in each still frame. Do not describe the frames: answer straight away with the picks.',
         user: `The video: ${context}
 Scenes:
 ${scenes.map((s, i) => `${i + 1}. ${s.replace(/\*/g, '')}`).join('\n')}
 The ${shortlist.length} images above are still frames of the clips, index 0 to ${shortlist.length - 1}. Pick the clip that fits each scene best (people and action over empty places, well lit, no visible text or logos).`,
         schema: Picks,
         name: 'clipPicks',
-        maxTokens: 1500,
+        maxTokens: 3000,
         images: shortlist.map((v) => v.thumb).filter(Boolean),
         model: process.env.LLM_VISION_MODEL || this._llm.fastModel(),
       });
@@ -1361,6 +1361,51 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
     const endLine = points.length && slots.subtext ? slots.subtext : `Follow ${brand.businessName} for more`;
     const others = history.filter((h) => h.id !== post.id);
 
+    // how long each step takes, logged with the result
+    const started = Date.now();
+    const timing: string[] = [];
+    const mark = (step: string) => timing.push(`${step} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+
+    // the pictures do not depend on the clips, so they are painted while the
+    // clips are found and downloaded (a failure is kept for later, so it is
+    // never an unhandled rejection)
+    const vibe = (VIBES as readonly string[]).includes(post.vibe) ? (post.vibe as Vibe) : 'professional';
+    const palettes = this._design.palettes(brand.primaryColor, brand.accentColor);
+    const palette: Palette = palettes.find((p) => p.id === post.paletteId) || palettes[0];
+    const host = (() => {
+      try {
+        return new URL(brand.ctaUrl || brand.websiteUrl || '').hostname.replace(/^www\./, '');
+      } catch (err) {
+        return undefined;
+      }
+    })();
+    const framesReady = (async () => {
+      const logo = brand.logoUrl ? await downloadImage(brand.logoUrl, 3 * 1024 * 1024) : undefined;
+      return this._design.videoFrames({
+        width,
+        height,
+        vibe,
+        palette,
+        brand: {
+          businessName: brand.businessName,
+          primaryColor: brand.primaryColor,
+          accentColor: brand.accentColor,
+          ctaText: brand.ctaText,
+        },
+        host,
+        logo,
+        seed: Math.floor(Math.random() * 1e6),
+        kicker: slots.kicker,
+        lines,
+        endLine,
+        // used only when no clips can be found
+        backdrops: true,
+      });
+    })().then(
+      (frames) => ({ frames, error: undefined as unknown }),
+      (error) => ({ frames: undefined, error })
+    );
+
     // clips: the same as before unless asked otherwise
     const clips: { buffer: Buffer; video?: StockVideo; url: string }[] = [];
     const prevUrls = post.clipUrls || [];
@@ -1381,10 +1426,6 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
       const buffers = await Promise.all(urls.map(download));
       buffers.forEach((buffer, i) => buffer && clips.push({ buffer, url: urls[i] }));
     }
-    // how long each step takes, logged with the result
-    const started = Date.now();
-    const timing: string[] = [];
-    const mark = (step: string) => timing.push(`${step} ${((Date.now() - started) / 1000).toFixed(1)}s`);
     let picked: StockVideo[] = [];
     if (clips.length < needed && this._stock.isConfigured()) {
       const avoid = new Set<string>(opts.newClips ? post.clipIds || [] : []);
@@ -1419,37 +1460,12 @@ The ${shortlist.length} images above are still frames of the clips, index 0 to $
       }
     }
 
-    const vibe = (VIBES as readonly string[]).includes(post.vibe) ? (post.vibe as Vibe) : 'professional';
-    const palettes = this._design.palettes(brand.primaryColor, brand.accentColor);
-    const palette: Palette = palettes.find((p) => p.id === post.paletteId) || palettes[0];
-    const logo = brand.logoUrl ? await downloadImage(brand.logoUrl, 3 * 1024 * 1024) : undefined;
-    const host = (() => {
-      try {
-        return new URL(brand.ctaUrl || brand.websiteUrl || '').hostname.replace(/^www\./, '');
-      } catch (err) {
-        return undefined;
-      }
-    })();
     mark(`clips(${clips.length})`);
-    const frames = await this._design.videoFrames({
-      width,
-      height,
-      vibe,
-      palette,
-      brand: {
-        businessName: brand.businessName,
-        primaryColor: brand.primaryColor,
-        accentColor: brand.accentColor,
-        ctaText: brand.ctaText,
-      },
-      host,
-      logo,
-      seed: Math.floor(Math.random() * 1e6),
-      kicker: slots.kicker,
-      lines,
-      endLine,
-      backdrops: !clips.length,
-    });
+    const painted = await framesReady;
+    if (!painted.frames) {
+      throw painted.error;
+    }
+    const frames = painted.frames;
 
     const pans: StoryScene['pan'][] = ['right', 'up', 'left', 'down'];
     const layersOf = (steps: { png: Buffer; at: number; x: number; y: number }[]) =>
