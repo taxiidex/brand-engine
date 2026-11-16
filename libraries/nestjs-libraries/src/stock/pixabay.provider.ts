@@ -107,11 +107,15 @@ export class PixabayProvider implements StockProvider {
       const data = (await res.json()) as { hits?: any[] };
       const videos: StockVideo[] = [];
       for (const v of data.hits || []) {
-        // large is 1080p or more; medium (720p) keeps the download small
+        // the smallest rendition that is still at least 1080p: a 4K clip
+        // costs four times as much to decode and looks no better at
+        // 1080x1920; otherwise the largest one under 40 MB
+        const renditions = ['tiny', 'small', 'medium', 'large']
+          .map((k) => v?.videos?.[k])
+          .filter((r) => r?.url && r.width && r.height && (!r.size || r.size < 40_000_000));
         const file =
-          v?.videos?.large?.url && v.videos.large.size < 40_000_000
-            ? v.videos.large
-            : v?.videos?.medium;
+          renditions.find((r) => Math.min(r.width, r.height) >= 1080) ||
+          renditions[renditions.length - 1];
         if (!file?.url || !file.width || !file.height) {
           continue;
         }
