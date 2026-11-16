@@ -35,6 +35,9 @@ import { SignatureRepository } from '@gitroom/nestjs-libraries/database/prisma/s
 import { SignatureService } from '@gitroom/nestjs-libraries/database/prisma/signatures/signature.service';
 import { AutopostRepository } from '@gitroom/nestjs-libraries/database/prisma/autopost/autopost.repository';
 import { AutopostService } from '@gitroom/nestjs-libraries/database/prisma/autopost/autopost.service';
+import { BrandRepository } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.repository';
+import { BrandScraper } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.scraper';
+import { BrandService } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.service';
 import { SetsService } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.service';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
@@ -80,6 +83,9 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     SignatureRepository,
     AutopostRepository,
     AutopostService,
+    BrandRepository,
+    BrandScraper,
+    BrandService,
     SignatureService,
     MediaService,
     MediaRepository,
