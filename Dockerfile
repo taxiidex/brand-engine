@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-dejavu-core \
     fonts-inter \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
 && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system www \

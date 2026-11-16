@@ -185,3 +185,17 @@ GitHub → VPS.
 ## 8. Not in scope for v1
 Paid image/video generators (keep upstream's fal/HeyGen but off by default), analytics beyond
 what Postiz has, Polotno editor key, mobile app, billing/Stripe.
+
+---
+
+## 9. Build log and deviations from this spec
+
+**Phase 1 (done):** brand profile, website auto-fill (jsdom scraper + AI summary), Brand tab in Settings.
+
+**Phase 2 (done):**
+- Images render with **`@napi-rs/canvas`**, not `canvas`: the `canvas` package's native module is not built in the Docker image (pnpm blocks its build script) and needs system graphics libraries. `@napi-rs/canvas` ships prebuilt binaries.
+- **Pexels only** for now. Unsplash is deferred: its API terms require production approval and a download-tracking call per use. The provider interface leaves room for it.
+- Templates: photo with headline, quote card, brand card (carousel and stat card come later). Sizes: feed 4:5, square, landscape, story 9:16.
+- Logos and photos are decoded only if they are PNG, JPEG or WebP. SVG is refused because the renderer would resolve whatever files or URLs it points at.
+- Fonts in the image: Inter, DejaVu, Noto core (many scripts) and Noto Color Emoji. **CJK is not included** (about 100 MB); add `fonts-noto-cjk` if Chinese, Japanese or Korean customers appear.
+- Needs `PEXELS_API_KEY` (free). Without it the quote and brand cards still work.

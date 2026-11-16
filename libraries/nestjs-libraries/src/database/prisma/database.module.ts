@@ -38,6 +38,8 @@ import { AutopostService } from '@gitroom/nestjs-libraries/database/prisma/autop
 import { BrandRepository } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.repository';
 import { BrandScraper } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.scraper';
 import { BrandService } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.service';
+import { StockService } from '@gitroom/nestjs-libraries/stock/stock.service';
+import { ImageRenderer } from '@gitroom/nestjs-libraries/render/image.renderer';
 import { SetsService } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.service';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
@@ -86,6 +88,8 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     BrandRepository,
     BrandScraper,
     BrandService,
+    StockService,
+    ImageRenderer,
     SignatureService,
     MediaService,
     MediaRepository,

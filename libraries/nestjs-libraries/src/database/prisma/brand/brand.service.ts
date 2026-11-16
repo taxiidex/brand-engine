@@ -2,6 +2,16 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { BrandRepository } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.repository';
 import { BrandScraper } from '@gitroom/nestjs-libraries/database/prisma/brand/brand.scraper';
 import { OpenaiService } from '@gitroom/nestjs-libraries/openai/openai.service';
+import { MediaService } from '@gitroom/nestjs-libraries/database/prisma/media/media.service';
+import { StockService } from '@gitroom/nestjs-libraries/stock/stock.service';
+import {
+  ImageRenderer,
+  ImageSize,
+  ImageTemplate,
+} from '@gitroom/nestjs-libraries/render/image.renderer';
+import { downloadImage } from '@gitroom/nestjs-libraries/render/remote.image';
+import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
+import { GenerateBrandImageDto } from '@gitroom/nestjs-libraries/dtos/brand/brand.image.dto';
 import {
   BRAND_TONES,
   BrandProfileDto,
@@ -44,8 +54,13 @@ export class BrandService {
   constructor(
     private _brandRepository: BrandRepository,
     private _brandScraper: BrandScraper,
-    private _openaiService: OpenaiService
+    private _openaiService: OpenaiService,
+    private _stockService: StockService,
+    private _imageRenderer: ImageRenderer,
+    private _mediaService: MediaService
   ) {}
+
+  private storage = UploadFactory.createStorage();
 
   getBrand(orgId: string) {
     return this._brandRepository.getBrand(orgId);
@@ -103,5 +118,84 @@ export class BrandService {
       ctaUrl: site.url,
       aiGenerated: !!ai,
     };
+  }
+
+  async searchPhotos(query: string, size: ImageSize = 'feed') {
+    const orientation =
+      size === 'landscape'
+        ? 'landscape'
+        : size === 'square'
+        ? 'square'
+        : 'portrait';
+    return {
+      configured: this._stockService.isConfigured(),
+      photos: await this._stockService.search(query, orientation),
+    };
+  }
+
+  // Renders a branded image from the saved brand. With save: false it only
+  // returns a preview, with save: true the image also lands in the media
+  // library, ready to attach to a post.
+  async generateImage(orgId: string, body: GenerateBrandImageDto) {
+    const brand = await this._brandRepository.getBrand(orgId);
+    if (!brand) {
+      throw new BadRequestException('Save your brand first.');
+    }
+    const size = body.size as ImageSize;
+    const template = body.template as ImageTemplate;
+
+    let photo: Buffer | undefined;
+    if (template === 'photo-hook') {
+      let url = body.photoUrl;
+      if (!url) {
+        const found = await this.searchPhotos(
+          body.photoQuery || brand.niche || brand.businessName,
+          size
+        );
+        url = found.photos[0]?.url;
+      }
+      photo = url ? await this._stockService.download(url) : undefined;
+    }
+
+    const logo = brand.logoUrl
+      ? await downloadImage(brand.logoUrl, 3 * 1024 * 1024)
+      : undefined;
+
+    const image = await this._imageRenderer.render({
+      template,
+      size,
+      hook: body.hook,
+      subtext: body.subtext,
+      brand: {
+        businessName: brand.businessName,
+        primaryColor: brand.primaryColor,
+        accentColor: brand.accentColor,
+        fontFamily: brand.fontFamily,
+        ctaText: brand.ctaText,
+      },
+      logo,
+      photo,
+    });
+
+    const dataUrl = `data:${image.mime};base64,${image.buffer.toString(
+      'base64'
+    )}`;
+    const result = {
+      template: image.template,
+      width: image.width,
+      height: image.height,
+      preview: dataUrl,
+    };
+    if (!body.save) {
+      return { ...result, media: null };
+    }
+
+    const file = await this.storage.uploadSimple(dataUrl);
+    const media = await this._mediaService.saveFile(
+      orgId,
+      file.split('/').pop()!,
+      file
+    );
+    return { ...result, media };
   }
 }

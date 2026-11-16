@@ -11,6 +11,7 @@ import { Textarea } from '@gitroom/react/form/textarea';
 import { ColorPicker } from '@gitroom/react/form/color.picker';
 import { useToaster } from '@gitroom/react/toaster/toaster';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
+import { BrandImageStudio } from '@gitroom/frontend/components/brand/brand.image';
 
 const TONES = [
   'professional',
@@ -382,6 +383,7 @@ export const BrandSettings: FC = () => {
           </div>
         </form>
       </FormProvider>
+      {!!data?.id && <BrandImageStudio niche={data.niche || ''} />}
     </div>
   );
 };
