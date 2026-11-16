@@ -44,6 +44,19 @@ const VIBES = [
   { value: 'aesthetic', label: 'Aesthetic' },
   { value: 'inspiring', label: 'Inspiring' },
 ];
+// how far a funny post goes
+const SPICES = [
+  { value: 'mild', label: 'Mild' },
+  { value: 'spicy', label: 'Spicy' },
+  { value: 'savage', label: 'Savage' },
+];
+const SPICE_HINT: Record<string, string> = {
+  mild: 'Playful and relatable. Laughs at situations, never at anyone.',
+  spicy: 'Roasts the old way of doing things and lovingly roasts your audience.',
+  savage:
+    'Also jabs at competitors, and may name the ones in your keywords (like "X alternative"). You check every post before it goes out.',
+};
+
 const VIBE_LABEL: Record<string, string> = Object.fromEntries(
   VIBES.map((v) => [v.value, v.label])
 );
@@ -178,6 +191,7 @@ export const CreatePost: FC = () => {
   const [showAllTopics, setShowAllTopics] = useState(false);
   const [format, setFormat] = useState('auto');
   const [vibe, setVibe] = useState('auto');
+  const [spice, setSpice] = useState('spicy');
   const [size, setSize] = useState('feed');
   const [picked, setPicked] = useState<string[] | null>(null);
   const selected = picked ?? channels.map((c) => c.id);
@@ -362,6 +376,7 @@ export const CreatePost: FC = () => {
             : undefined,
         style: format,
         vibe,
+        spice,
         size,
         channels: selectedChannels.map((c) => c.identifier),
       });
@@ -390,7 +405,7 @@ export const CreatePost: FC = () => {
     } finally {
       setWriting(false);
     }
-  }, [ownTopic, topicChoice, format, vibe, size, selectedChannels]);
+  }, [ownTopic, topicChoice, format, vibe, spice, size, selectedChannels]);
 
   const search = useCallback(async () => {
     if (photoQuery.trim().length < 2 || !post) {
@@ -560,6 +575,14 @@ export const CreatePost: FC = () => {
             <Field label="Feel">
               <ChoiceChips options={VIBES} value={vibe} onChange={setVibe} />
             </Field>
+            {(vibe === 'funny' || vibe === 'auto') && (
+              <Field
+                label={vibe === 'funny' ? 'How spicy?' : 'How spicy, when it is funny?'}
+                hint={SPICE_HINT[spice]}
+              >
+                <ChoiceChips options={SPICES} value={spice} onChange={setSpice} />
+              </Field>
+            )}
             {format !== 'text' && (
               <Field label="Size">
                 <ChoiceChips

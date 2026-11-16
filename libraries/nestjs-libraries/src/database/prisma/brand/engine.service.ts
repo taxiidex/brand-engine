@@ -125,6 +125,54 @@ export const ANGLES: Record<string, AngleDef> = {
       'A funny, relatable everyday moment your audience instantly recognises. Light humour, self-aware, never mean or offensive. Short.',
     vibes: ['funny'],
   },
+  roast_old_way: {
+    label: 'Roast of the old way',
+    needs: [],
+    layouts: ['compare', 'meme', 'tweet', 'notes'],
+    shape:
+      'Roast the outdated, painful way the audience still does this today (the spreadsheets, the phone calls, the 14 open tabs, the software from 2009). Exaggerate the most specific, recognisable detail until it is absurd. The brand appears once, near the end, as the obvious escape. Setup, twist, done.',
+    vibes: ['funny'],
+  },
+  roast_audience: {
+    label: 'Loving roast of the audience',
+    needs: [],
+    layouts: ['tweet', 'meme', 'sticky', 'notes'],
+    shape:
+      'Lovingly roast the audience for how they spend their days (and nights) doing things the hard way when they could be living their life, with the brand doing the work. Second person, painfully specific, the kind of roast people tag a colleague in. Only about what they do, never about who they are.',
+    vibes: ['funny'],
+  },
+  competitor_jab: {
+    label: 'Competitor jab',
+    needs: [],
+    layouts: ['compare', 'tweet', 'poster', 'meme'],
+    shape:
+      "A cheeky jab at the competition. Build the joke on the brand's own advantages from the FACTS (how it prices, what is included, how fast it is) set against the annoying habits the category is known for. Never state a fact about a competitor that the FACTS do not support.",
+    vibes: ['funny'],
+  },
+  meme_format: {
+    label: 'Meme',
+    needs: [],
+    layouts: ['meme', 'tweet', 'sticky', 'compare'],
+    shape:
+      'Use a well-known internet format: "POV:", "Nobody: / Me:", "Me vs ...", "Expectation vs reality", "Tell me you ... without telling me you ...". Very short. The caption adds one or two lines of context at most.',
+    vibes: ['funny'],
+  },
+  red_flags: {
+    label: 'Red flags',
+    needs: [],
+    layouts: ['notes', 'checklist', 'carousel'],
+    shape:
+      '"Red flags in ..." about the category or the old way of working: 3 to 5 short, funny, recognisable red flags, each one a small roast. End with the green flag: the brand.',
+    vibes: ['funny'],
+  },
+  mock_announcement: {
+    label: 'Mock announcement',
+    needs: [],
+    layouts: ['poster', 'statement', 'tweet'],
+    shape:
+      'A mock-serious announcement, fake award, public service announcement or "a moment of silence for..." about the old way of doing things. Deadpan and short, then one line that lands the point.',
+    vibes: ['funny'],
+  },
   mistakes: {
     label: 'Mistakes to avoid',
     needs: [],
@@ -148,7 +196,7 @@ const VOICE: Record<Vibe, string> = {
   bold:
     'Punchy and provocative. Very short sentences. Strong opinions, pattern-breaking openings, high energy. Never insulting, never misleading.',
   funny:
-    'Witty and playful. Self-aware humour, wordplay and relatable exaggeration your audience gets instantly. Never mean, crude or offensive.',
+    'A stand-up comedian who runs the funniest meme page in this industry. Roast, troll and exaggerate: the old way of doing things, the daily chaos of the audience, the habits of the competition. Painfully specific details, setup then twist, short lines, internet formats (POV:, Nobody: / Me:, expectation vs reality). Emoji only as punctuation for a joke (💀 😭 🫠 🕯️). Never a pun about the product, never a feature list.',
   aesthetic:
     'Calm, elegant and minimal. Few words, sensory language, a premium feel. Lowercase-friendly, no shouting.',
   inspiring:
@@ -190,6 +238,24 @@ const HOOK_CONSTRAINTS = [
   'open with an unexpected comparison',
   'open with a confession or honest admission',
 ];
+
+// hook formats for funny posts, five of them per post
+const COMEDY_HOOKS = [
+  'a "POV:" line about a painfully specific moment',
+  'a "Nobody: / Me:" (or "Me: ... Also me: ...") line',
+  'a mock-serious announcement, fake award or public service announcement',
+  'a "moment of silence for..." the old way of doing things',
+  'exaggerate a real, specific pain until it is absurd',
+  'roast the reader lovingly, second person, one oddly specific detail',
+  'expectation vs reality',
+  'a "Tell me you ... without telling me you ..." line',
+  'an unexpected comparison that makes the old way look ridiculous',
+  'tease a list of red flags',
+];
+
+// how far the jokes go
+export const SPICE_LEVELS = ['mild', 'spicy', 'savage'] as const;
+export type Spice = (typeof SPICE_LEVELS)[number];
 
 const BANNED = [
   'Looking for',
@@ -375,6 +441,8 @@ export interface ComposeInput {
   topicId?: string;
   style: string; // auto | photo | graphic | carousel | video | text
   vibe: string; // auto | professional | bold | funny | aesthetic | inspiring
+  // how far funny posts go: mild | spicy | savage (default spicy)
+  spice?: string;
   size: DesignSize;
   channels?: string[];
 }
@@ -550,7 +618,8 @@ export class EngineService {
     vibe: Vibe,
     topic: { facts: string[]; custom: boolean },
     brand: BrandProfile,
-    history: BrandPost[]
+    history: BrandPost[],
+    spice: Spice = 'spicy'
   ) {
     const hasFacts = topic.facts.length > 0 || !!brand.description;
     const hasProof = brand.proofPoints.length > 0;
@@ -570,6 +639,14 @@ export class EngineService {
       if (a.vibes && !a.vibes.includes(vibe)) {
         return false;
       }
+      // a funny post is built on a comedy angle, not a joke added to a
+      // feature post; a mild one does not take on the competition
+      if (vibe === 'funny' && !a.vibes?.includes('funny')) {
+        return false;
+      }
+      if (vibe === 'funny' && spice === 'mild' && key === 'competitor_jab') {
+        return false;
+      }
       return true;
     });
     return (
@@ -577,7 +654,7 @@ export class EngineService {
         candidates.map(([key]) => ({
           item: key,
           // least used first
-          weight: 1 / (1 + (uses.get(key) || 0)),
+          weight: (vibe === 'funny' && spice === 'savage' && key === 'competitor_jab' ? 3 : 1) / (1 + (uses.get(key) || 0)),
         }))
       ) || 'problem_fix'
     );
@@ -696,7 +773,7 @@ export class EngineService {
   }
 
   // numbers and big claims that cannot be traced to the site or the client
-  private claimFlags(texts: string[], corpus: string) {
+  private claimFlags(texts: string[], corpus: string, comedy = false) {
     const flags: string[] = [];
     const joined = texts.join(' \n ');
     const withoutTimes = joined.replace(/\b\d{1,2}[:.]\d{2}\s?(am|pm)?\b/gi, ' ').replace(/\b\d{1,2}\s?(am|pm)\b/gi, ' ');
@@ -705,7 +782,7 @@ export class EngineService {
     for (const n of new Set(numbers.map((x) => x.trim()))) {
       const digits = n.replace(/[^\d]/g, '');
       const value = Number(digits);
-      const significant = /[£$€%]|percent|\+/i.test(n) || value > 10;
+      const significant = /[£$€%]|percent|\+/i.test(n) || (!comedy && value > 10);
       if (digits.length && significant && !corpus.includes(digits)) {
         flags.push(`Check this number: "${n.trim().replace(/[.,;:]+$/, '')}" is not on your website or in your proof points.`);
       }
@@ -739,7 +816,20 @@ export class EngineService {
     }
     const topic = this.chooseTopic(pool, history, input);
     const vibe = this.chooseVibe(brand, history, input.vibe);
-    let angle = this.chooseAngle(vibe, topic, brand, history);
+    const spice: Spice = (SPICE_LEVELS as readonly string[]).includes(input.spice || '')
+      ? (input.spice as Spice)
+      : 'spicy';
+    const comedy = vibe === 'funny';
+    // competitors the brand positions against, from keywords like
+    // "Autocab alternative"
+    const competitors: string[] = Array.from(
+      new Set(
+        (brand.keywords as string[])
+          .map((k) => k.match(/^(.+?)\s+alternative$/i)?.[1]?.trim())
+          .filter((k): k is string => !!k && k.length > 1)
+      )
+    ).slice(0, 6);
+    let angle = this.chooseAngle(vibe, topic, brand, history, spice);
     // a carousel needs an angle that can be told in slides
     const carouselOk = input.size === 'feed' || input.size === 'square';
     if (input.style === 'carousel' && carouselOk && !ANGLES[angle].layouts.includes('carousel')) {
@@ -772,11 +862,15 @@ export class EngineService {
       : input.style;
     const palette = this.choosePalette(vibe, history);
     const ctaType = this.chooseCta(history, brand);
-    const keyword = this.chooseKeyword(brand, history);
+    const named = (k: string) => competitors.some((c) => k.toLowerCase().includes(c.toLowerCase()));
+    let keyword = this.chooseKeyword(brand, history);
+    if (comedy && spice !== 'savage' && named(keyword)) {
+      keyword = (brand.keywords as string[]).find((k) => !named(k)) || brand.niche;
+    }
     const facts = this.brandFacts(brand, topic.facts, topics);
     const avoid = [...this.avoidList(history), ...BANNED];
     const recentHeadlines = history.slice(0, 15).map((h) => h.headline.replace(/\*/g, ''));
-    const constraints = [...HOOK_CONSTRAINTS].sort(() => Math.random() - 0.5).slice(0, 5);
+    const constraints = [...(comedy ? COMEDY_HOOKS : HOOK_CONSTRAINTS)].sort(() => Math.random() - 0.5).slice(0, 5);
     const channels = (input.channels || []).map((c) => c.toLowerCase());
     const today = new Date().toISOString().slice(0, 10);
 
@@ -798,13 +892,63 @@ Rules: use only these facts. Never invent numbers, prices, offers, awards, custo
       comments: 'End by saying the link is in the comments (on Instagram: "link in bio"). Do not write the link.',
       none: 'No call to action at all. End on the strongest line.',
     };
+    if (comedy) {
+      ctaRule.question = 'End with a cheeky "Tag the [someone from the audience] who..." line or a playful question. No link.';
+      ctaRule.soft = 'End with one cheeky line that points to the brand as the escape. No link.';
+      ctaRule.none = 'No call to action. End on the punchline.';
+    }
+    const spiceRule: Record<Spice, string> = {
+      mild: 'Mild: playful and relatable. Laugh at situations and the old way of doing things, never at anyone.',
+      spicy:
+        'Spicy: roast it. Make fun of the old way, lovingly roast the habits of the audience, and jab at the category the competition belongs to ("legacy software", "the system that charges per seat") without naming any competitor.',
+      savage: `Savage: go all in on the old way, the audience's habits and the competition. ${
+        competitors.length
+          ? `You may name these competitors: ${competitors.join(', ')}.`
+          : 'No competitors are listed, so do not name any.'
+      } Joke about them only with the brand's own advantages from the FACTS or gripes everyone in the industry knows; never state a fact about a competitor that the FACTS do not support, and never insult their staff or customers.`,
+    };
+    const recentOpenings = Array.from(
+      new Set(
+        history
+          .filter((h) => h.vibe === 'funny')
+          .slice(0, 8)
+          .map((h) => (h.firstLine || '').split(/\s+/).slice(0, 2).join(' ').replace(/[*"]/g, ''))
+          .filter(Boolean)
+      )
+    );
+    const comedyRules = comedy
+      ? `COMEDY RULES:${
+          recentOpenings.length
+            ? `\n- Recent funny posts opened with: ${recentOpenings.map((o) => `"${o}"`).join(', ')}. Open differently this time.`
+            : ''
+        }${spice !== 'savage' && competitors.length ? `\n- Never write the names ${competitors.join(', ')}.` : ''}
+- It must make a real person laugh out loud or tag a friend. A pun or a product explanation is not a joke.
+- ${spiceRule[spice]}
+- Specific beats generic: name the exact painful detail people recognise (the 14 tabs, the 2am call, the "system is loading").
+- Setup, then twist. Cut every word that is not part of the joke.
+- The brand is the escape, mentioned once near the end. Never turn the joke into a feature list.
+- Punch at situations, habits, the old way and the category, never at anyone's identity, looks, age, gender, race, religion or nationality. No swearing.
+- Image text is the joke itself: short, readable in one second. For compare layouts use labels like "Expectation" / "Reality", "Them" / "Us", "You at 9:00" / "You at 9:05".
+- Score each hook (score) by how likely someone laughs out loud or tags a friend.
+STYLE EXAMPLES from other industries (match the energy, never copy them):
+- "POV: it's 2026 and you're still copy-pasting bookings from WhatsApp into Excel like it's a personality trait."
+- "A moment of silence for everyone who said 'the system is just loading' today. 🕯️"
+- "Nobody: / Accounting software from 2009: 'that will be an extra module'"
+- "You could be at the beach right now. Instead you're on tab 14, fighting a VLOOKUP that hates you personally."
+- "Red flags in a CRM: 1. 'Book a call to see pricing' 2. The demo is a PDF 3. Exporting your own data costs extra"
+- "Gym owners at 11pm: 'I'll just update the class schedule real quick.' Gym owners at 2am: 💀"`
+      : '';
     const voiceSamples = approved
       .map((p) => p.publishedCaption || p.caption)
       .filter(Boolean)
       .slice(0, 3);
-    const postRules = `CALL TO ACTION: ${ctaRule[ctaType]}
+    const postRules = `${comedyRules ? `${comedyRules}\n` : ''}CALL TO ACTION: ${ctaRule[ctaType]}
 IMAGE LAYOUT: ${layout}. Fill these fields: ${LAYOUT_SLOTS[layout] || 'kicker, subtext'}. Leave every other image field empty ("" or []).
-CAPTION: 80 to 180 words, short paragraphs, line breaks between them.
+${
+      comedy
+        ? 'CAPTION: 30 to 90 words. The joke is the post: set it up, land it, then at most two short lines about the brand. No feature lists. At most 2 emoji in the whole caption.'
+        : 'CAPTION: 80 to 180 words, short paragraphs, line breaks between them.'
+    }
 ${channels.length ? `The client is posting to: ${channels.join(', ')}.` : ''}
 No hashtags inside the caption. Hashtags go in the hashtags field.${
       layout === 'video'
@@ -829,7 +973,11 @@ ${voiceSamples.length ? `Captions this brand approved before (match their voice,
         user: `TOPIC: ${topic.title}${topic.custom ? ' (typed by the client)' : ''}
 ANGLE: ${ANGLES[angle].label}. Shape of the caption: ${ANGLES[angle].shape}
 VIBE: ${vibe}. ${VOICE[vibe]}
-KEYWORD to place naturally in the first line: "${keyword}"
+${
+          comedy
+            ? `KEYWORD: use "${keyword}" only where it fits the joke naturally, otherwise later in the caption; never force it into the punchline`
+            : `KEYWORD to place naturally in the first line: "${keyword}"`
+        }
 TODAY: ${today}
 Write 5 hooks. Hook n must follow constraint n:
 ${constraints.map((c, i) => `${i + 1}. ${c}`).join('\n')}
@@ -860,7 +1008,7 @@ ${postRules}`,
       const hasKeyword = h.firstLine.toLowerCase().includes(kw) || tokens(kw).every((t) => tokens(h.firstLine).includes(t));
       return {
         ok: !!h.headline.trim() && !!h.firstLine.trim() && !repeatsHeadline && !repeatsFirst && !banned,
-        rank: (h.score || 0) + (hasKeyword ? 2 : 0),
+        rank: (h.score || 0) + (hasKeyword && !comedy ? 2 : 0),
       };
     };
     const ranked = hookSet.hooks
@@ -946,11 +1094,21 @@ ${postRules}`,
 
     const flags = this.claimFlags(
       [slots.headline, caption, slots.subtext || '', slots.bigNumber || '', ...(slots.items || [])],
-      facts.corpus
+      facts.corpus,
+      comedy
     );
+    const allText = [slots.headline, caption, ...Object.values(slots).flat().filter((v) => typeof v === 'string')].join(' ').toLowerCase();
+    for (const name of competitors) {
+      if (allText.includes(name.toLowerCase())) {
+        flags.push(`This post names ${name}. Make sure every word about them is true and fair before you post it.`);
+      }
+    }
     if (hookSet.customTopicNote?.trim()) {
       flags.unshift(`confirm:${hookSet.customTopicNote.trim()}`);
     }
+    const uniqueFlags = Array.from(new Set(flags));
+    flags.length = 0;
+    flags.push(...uniqueFlags);
 
     const post = await this._content.createPost(orgId, {
       topic: topic.title,

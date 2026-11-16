@@ -197,6 +197,11 @@ export class ComposeDto {
   @IsIn(['auto', ...VIBES])
   vibe: string;
 
+  // how far a funny post goes
+  @IsOptional()
+  @IsIn(['mild', 'spicy', 'savage'])
+  spice?: string;
+
   @IsIn(Object.keys(IMAGE_SIZES))
   size: string;
 
